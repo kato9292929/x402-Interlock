@@ -1,6 +1,8 @@
 # spec/
 
-Specs and prompts given to AI coding tools while building Countersign.
+Specs and prompts given to AI coding tools while building **x402 Interlock**.
+
+> Naming: the brief (`00-instructions.md`) uses the working title "Countersign". The owner renamed the service to **x402 Interlock** on 2026-09-26 (~02:30 JST). The brief is kept verbatim.
 
 | File | What it is |
 |---|---|

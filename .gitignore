@@ -40,6 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# countersign runtime data
+# x402 Interlock runtime data
 /data/*.jsonl
 !.env.example
