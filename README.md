@@ -146,6 +146,14 @@ npm run agent -- dataset   #    $2.00 > per-payment cap → CAP to the $0.40 opt
 npm run agent -- report --cancel-after 30   # agent gives up → CANCELLED
 ```
 
+### Live checks
+
+```bash
+npm run verify-live   # Intercepta (all 4 calls, raw status + body), facilitator support for
+                      # Base Sepolia, buyer USDC balance; each result is timestamped in
+                      # data/live-checks.jsonl
+```
+
 ### Tests
 
 ```bash

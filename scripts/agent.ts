@@ -64,7 +64,11 @@ async function main() {
     console.log(`[gate] -> ${v.status}`);
   }
 
-  if (v.status === "PAID") console.log("[agent] got the resource:", JSON.stringify(v.result?.body));
+  if (v.status === "PAID") {
+    const tx = v.result?.settlement?.transaction;
+    console.log("[agent] got the resource:", JSON.stringify(v.result?.body));
+    console.log(`[agent] settlement tx: ${tx ?? "(none reported)"}${tx ? `  https://sepolia.basescan.org/tx/${tx}` : ""}`);
+  }
   else console.log(`[agent] not paid (${v.status}); continuing without it`);
 }
 
