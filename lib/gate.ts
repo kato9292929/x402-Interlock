@@ -257,6 +257,17 @@ function expireIfDue(decision_id: string, now = Date.now()) {
   if (now / 1000 > req.rp_context.expires_at) closeHuman(decision_id, "EXPIRED", { reason: "ttl_elapsed" });
 }
 
+/** Close every open request whose TTL has passed (used by the timeline). */
+export function expireAllDue() {
+  const open = new Set(
+    ledger()
+      .readAll()
+      .filter((e) => e.event_type === "human_verification" && e.data.status === "REQUESTED")
+      .map((e) => e.decision_id),
+  );
+  for (const id of open) expireIfDue(id);
+}
+
 export async function approve(decision_id: string, result: IDKitResult): Promise<{ outcome: VerificationOutcome; view: GateView }> {
   expireIfDue(decision_id);
   const req = loadApprovalRequest(decision_id);

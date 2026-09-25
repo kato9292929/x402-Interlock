@@ -34,7 +34,7 @@ const paidBodies: unknown[] = [];
 const listen = (s: Server) => new Promise<string>((r) => s.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
 before(async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "interlock-"));
+  const dir = process.env.TEST_DATA_DIR ?? mkdtempSync(path.join(tmpdir(), "interlock-"));
   process.env.DATA_DIR = dir;
   process.env.LEDGER_PATH = path.join(dir, "ledger.jsonl");
   process.env.POLICY_PATH = path.join(dir, "policy.json");
@@ -249,4 +249,19 @@ test("ledger chain intact and holds no secrets", async () => {
   assert.ok(!raw.includes("test-key"));
   assert.ok(!raw.includes(process.env.BUYER_PRIVATE_KEY!.slice(2)));
   assert.ok(!raw.includes(process.env.WORLD_SIGNING_KEY!));
+});
+
+test("expireAllDue closes stale requests without anyone opening them", async () => {
+  process.env.WORLD_APPROVAL_TTL_SECONDS = "1";
+  try {
+    const g = await gate();
+    const v = await ev("report", "run-sweep");
+    await new Promise((r) => setTimeout(r, 2100));
+    g.expireAllDue();
+    const { Ledger } = await import("../lib/ledger");
+    const h = new Ledger().byDecision(v.decision_id).filter((e) => e.event_type === "human_verification");
+    assert.equal(h.at(-1)?.data.status, "EXPIRED");
+  } finally {
+    delete process.env.WORLD_APPROVAL_TTL_SECONDS;
+  }
 });
