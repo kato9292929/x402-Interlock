@@ -1,0 +1,10 @@
+{
+  "token_decimals": 6,
+  "allowlist": [
+    "0x0000000000000000000000000000000000000000"
+  ],
+  "max_amount_per_payment": "1.00",
+  "max_amount_per_run": "3.00",
+  "ask_human_above": "0.50",
+  "repurchase_window_minutes": 10
+}
