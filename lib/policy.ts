@@ -56,7 +56,7 @@ export interface GateResult {
   selected?: PaymentOption;
 }
 
-export function loadPolicy(file = path.join(process.cwd(), "config", "policy.json")): Policy {
+export function loadPolicy(file = process.env.POLICY_PATH ?? path.join(process.cwd(), "config", "policy.json")): Policy {
   return JSON.parse(readFileSync(file, "utf8")) as Policy;
 }
 
