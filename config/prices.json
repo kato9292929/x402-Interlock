@@ -1,7 +1,27 @@
 {
+  "_comment": "Demo seller price list. payTo values name env vars, so the repo holds no addresses. Several prices = several x402 `accepts` options (used for CAP).",
   "network": "eip155:84532",
+  "facilitator_url": "https://x402.org/facilitator",
   "routes": {
-    "/api/quote": { "price": "$0.01", "description": "Spot price quote (demo, small payment)" },
-    "/api/report": { "price": "$0.80", "description": "Full market report (demo, high-value payment)" }
+    "quote": {
+      "description": "Spot price quote (scenario 1: safe, small)",
+      "payTo_env": "SELLER_PAY_TO",
+      "prices": ["$0.01"]
+    },
+    "report": {
+      "description": "Full market report (scenario 3: high value, needs a human)",
+      "payTo_env": "SELLER_PAY_TO",
+      "prices": ["$0.80"]
+    },
+    "dataset": {
+      "description": "Dataset export; full $2.00 or sample $0.40 (CAP demo)",
+      "payTo_env": "SELLER_PAY_TO",
+      "prices": ["$2.00", "$0.40"]
+    },
+    "risky": {
+      "description": "Seller whose payTo Intercepta flags (scenario 2)",
+      "payTo_env": "RISKY_PAY_TO",
+      "prices": ["$0.01"]
+    }
   }
 }
