@@ -1,0 +1,14 @@
+{
+  "_comment": "Intercepta risk data is mainnet-only. Testnet networks/assets are screened as their mainnet counterparts listed here. An asset with no mapping cannot be screened and is BLOCKed.",
+  "network_to_mainnet_chain_id": {
+    "eip155:84532": 8453,
+    "eip155:8453": 8453
+  },
+  "asset_to_mainnet": {
+    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  },
+  "address_block_if_toxic_score_at_least": 1,
+  "address_block_if_any_trait": true,
+  "deep_scan_above": "0.50",
+  "timeout_ms": 8000
+}
