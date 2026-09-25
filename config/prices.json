@@ -1,0 +1,7 @@
+{
+  "network": "eip155:84532",
+  "routes": {
+    "/api/quote": { "price": "$0.01", "description": "Spot price quote (demo, small payment)" },
+    "/api/report": { "price": "$0.80", "description": "Full market report (demo, high-value payment)" }
+  }
+}
