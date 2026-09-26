@@ -3,39 +3,51 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { toAtomic } from "./amount";
 import { deepScanAddress, quickScanAddress, scanMessage, scanToken, type CheckResult } from "./intercepta";
-import type { PaymentOption, Screening } from "./policy";
+import type { MainnetAddress, PaymentOption, Screening } from "./policy";
+
+// Payments settle on Base Sepolia, but Intercepta's risk data is Base mainnet only,
+// so every check runs against the mainnet counterpart (chainId 8453) of what is paid.
 
 interface ScreeningConfig {
-  network_to_mainnet_chain_id: Record<string, number>;
+  screening_chain_id: number;
   asset_to_mainnet: Record<string, string>;
   address_block_if_toxic_score_at_least: number;
   address_block_if_any_trait: boolean;
+  message: { block_risk_groups: string[]; pass_risk_groups: string[] };
   deep_scan_above: string;
   timeout_ms: number;
 }
 
-export function loadScreeningConfig(file = path.join(process.cwd(), "config", "screening.json")): ScreeningConfig {
+export function loadScreeningConfig(file = process.env.SCREENING_PATH ?? path.join(process.cwd(), "config", "screening.json")): ScreeningConfig {
   return JSON.parse(readFileSync(file, "utf8")) as ScreeningConfig;
 }
 
 export interface ScreeningReport extends Screening {
   checks: CheckResult[];
+  /** The mainnet addresses actually screened, recorded next to the testnet payment. */
+  screened_as?: { chain_id: number; payTo: MainnetAddress; asset: MainnetAddress };
 }
 
-/** EIP-3009 TransferWithAuthorization, the message x402 "exact" asks the buyer to sign. */
-export function transferAuthorizationTypedData(
-  from: string,
-  option: PaymentOption & { extra?: Record<string, unknown>; maxTimeoutSeconds?: number },
-  chainId: number,
-  verifyingContract: string,
-) {
+/**
+ * EIP-3009 TransferWithAuthorization, the message x402 "exact" asks the buyer to sign,
+ * rebuilt with mainnet values (chain, token contract, recipient) for screening.
+ */
+export function transferAuthorizationTypedData(p: {
+  from: string;
+  to: MainnetAddress;
+  value: string;
+  chainId: number;
+  verifyingContract: MainnetAddress;
+  extra?: Record<string, unknown>;
+  maxTimeoutSeconds?: number;
+}) {
   const now = Math.floor(Date.now() / 1000);
   return {
     domain: {
-      name: String(option.extra?.name ?? "USD Coin"),
-      version: String(option.extra?.version ?? "2"),
-      chainId,
-      verifyingContract,
+      name: String(p.extra?.name ?? "USD Coin"),
+      version: String(p.extra?.version ?? "2"),
+      chainId: p.chainId,
+      verifyingContract: p.verifyingContract,
     },
     types: {
       TransferWithAuthorization: [
@@ -49,51 +61,58 @@ export function transferAuthorizationTypedData(
     },
     primaryType: "TransferWithAuthorization",
     message: {
-      from,
-      to: option.payTo,
-      value: option.amount,
+      from: p.from,
+      to: p.to,
+      value: p.value,
       validAfter: String(now - 600),
-      validBefore: String(now + (option.maxTimeoutSeconds ?? 300)),
+      validBefore: String(now + (p.maxTimeoutSeconds ?? 300)),
       nonce: "0x" + randomBytes(32).toString("hex"),
     },
   };
 }
 
+const unavailable = (reason: string): ScreeningReport => ({ verdict: "UNAVAILABLE", reasons: [reason], checks: [] });
+
 /**
- * Screen the option that would actually be paid: payTo, token and the
- * authorization message. Intercepta data is mainnet-only, so testnet
- * networks/assets are mapped to their mainnet counterparts first.
+ * Screen the option that would actually be paid: payTo, token and the authorization
+ * message, each as its Base mainnet counterpart. `payToMainnet` comes from
+ * config/policy.json screening.targets; without it the payment cannot be screened.
  */
 export async function screen(
   option: PaymentOption & { extra?: Record<string, unknown>; maxTimeoutSeconds?: number },
+  payToMainnet: MainnetAddress | undefined,
   buyer: string,
   website: string,
   tokenDecimals: number,
   cfg = loadScreeningConfig(),
 ): Promise<ScreeningReport> {
-  const rule = { blockAtScore: cfg.address_block_if_toxic_score_at_least, blockOnAnyTrait: cfg.address_block_if_any_trait };
+  const addressRule = { blockAtScore: cfg.address_block_if_toxic_score_at_least, blockOnAnyTrait: cfg.address_block_if_any_trait };
+  const messageRule = { blockRiskGroups: cfg.message.block_risk_groups, passRiskGroups: cfg.message.pass_risk_groups };
   const t = cfg.timeout_ms;
-  const chainId = cfg.network_to_mainnet_chain_id[option.network];
-  const mainnetAsset = cfg.asset_to_mainnet[option.asset.toLowerCase()];
-  if (!chainId || !mainnetAsset) {
-    return {
-      verdict: "UNAVAILABLE",
-      reasons: [`no mainnet mapping for ${option.network} / ${option.asset}`],
-      checks: [],
-    };
-  }
+  const chainId = cfg.screening_chain_id;
+  const asset = cfg.asset_to_mainnet[option.asset.toLowerCase()] as MainnetAddress | undefined;
+  if (!payToMainnet) return unavailable(`no mainnet screening address configured for payTo ${option.payTo}`);
+  if (!asset) return unavailable(`no mainnet counterpart configured for asset ${option.asset}`);
 
   const deep = BigInt(option.amount) > toAtomic(cfg.deep_scan_above, tokenDecimals);
-  const typed = transferAuthorizationTypedData(buyer, option, chainId, mainnetAsset);
+  const typed = transferAuthorizationTypedData({
+    from: buyer,
+    to: payToMainnet,
+    value: option.amount,
+    chainId,
+    verifyingContract: asset,
+    extra: option.extra,
+    maxTimeoutSeconds: option.maxTimeoutSeconds,
+  });
   const checks = await Promise.all([
-    deep ? deepScanAddress(option.payTo, rule, t) : quickScanAddress(option.payTo, rule, t),
-    scanToken(mainnetAsset, chainId, t),
-    scanMessage(buyer, typed, chainId, website, t),
+    deep ? deepScanAddress(payToMainnet, addressRule, t) : quickScanAddress(payToMainnet, addressRule, t),
+    scanToken(asset, chainId, t),
+    scanMessage(buyer, typed, String(chainId), website, messageRule, t),
   ]);
 
   const risky = checks.filter((c) => c.verdict === "RISKY");
-  const unavailable = checks.filter((c) => c.verdict === "UNAVAILABLE");
-  const verdict = risky.length ? "RISKY" : unavailable.length ? "UNAVAILABLE" : "SAFE";
-  const reasons = [...risky, ...unavailable].flatMap((c) => c.reasons.map((r) => `${c.check}: ${r}`));
-  return { verdict, reasons, checks };
+  const down = checks.filter((c) => c.verdict === "UNAVAILABLE");
+  const verdict = risky.length ? "RISKY" : down.length ? "UNAVAILABLE" : "SAFE";
+  const reasons = [...risky, ...down].flatMap((c) => c.reasons.map((r) => `${c.check}: ${r}`));
+  return { verdict, reasons, checks, screened_as: { chain_id: chainId, payTo: payToMainnet, asset } };
 }

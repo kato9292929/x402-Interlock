@@ -22,6 +22,19 @@ export interface Policy {
   max_amount_per_run: string;
   ask_human_above: string;
   repurchase_window_minutes: number;
+  screening?: { targets: ScreeningTarget[] };
+}
+
+// Payments settle on Base Sepolia; Intercepta screens Base mainnet. The two kinds of
+// address are distinct types so one cannot be passed where the other is expected.
+declare const brand: unique symbol;
+export type TestnetAddress = string & { readonly [brand]: "testnet" };
+export type MainnetAddress = string & { readonly [brand]: "mainnet" };
+
+export interface ScreeningTarget {
+  name: string;
+  payTo: string; // testnet payTo (Base Sepolia), what the allowlist holds
+  mainnet: string; // Base mainnet address Intercepta screens for that payTo
 }
 
 /** One payment option out of an x402 402-response `accepts` list. */
@@ -56,8 +69,30 @@ export interface GateResult {
   selected?: PaymentOption;
 }
 
+/** `env:NAME` -> process.env.NAME (undefined if unset); anything else is returned as-is. */
+export function resolveRef(v: string): string | undefined {
+  return v.startsWith("env:") ? process.env[v.slice(4)] || undefined : v;
+}
+
 export function loadPolicy(file = process.env.POLICY_PATH ?? path.join(process.cwd(), "config", "policy.json")): Policy {
-  return JSON.parse(readFileSync(file, "utf8")) as Policy;
+  const raw = JSON.parse(readFileSync(file, "utf8")) as Policy;
+  const targets = (raw.screening?.targets ?? []).flatMap((t) => {
+    const payTo = resolveRef(t.payTo);
+    const mainnet = resolveRef(t.mainnet);
+    return payTo && mainnet ? [{ name: t.name, payTo, mainnet }] : [];
+  });
+  return {
+    ...raw,
+    // Unset env entries drop out, so a missing address can only make the gate stricter.
+    allowlist: raw.allowlist.map(resolveRef).filter((a): a is string => !!a),
+    screening: { targets },
+  };
+}
+
+/** The mainnet address to screen for a testnet payTo, or undefined (-> cannot screen -> BLOCK). */
+export function mainnetScreeningAddress(policy: Policy, payTo: TestnetAddress): MainnetAddress | undefined {
+  const t = policy.screening?.targets.find((x) => x.payTo.toLowerCase() === payTo.toLowerCase());
+  return t ? (t.mainnet as MainnetAddress) : undefined;
 }
 
 const lower = (s: string) => s.toLowerCase();

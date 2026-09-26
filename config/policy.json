@@ -1,10 +1,19 @@
 {
-  "token_decimals": 6,
-  "allowlist": [
-    "0x0000000000000000000000000000000000000000"
+  "_comment": [
+    "Values of the form env:NAME are read from the environment (see .env.example).",
+    "allowlist holds the TESTNET payTo addresses that are actually paid (Base Sepolia).",
+    "screening.targets maps each testnet payTo to the Base MAINNET address Intercepta screens in its place. A payTo with no target cannot be screened and is BLOCKed."
   ],
+  "token_decimals": 6,
+  "allowlist": ["env:SELLER_PAY_TO"],
   "max_amount_per_payment": "1.00",
   "max_amount_per_run": "3.00",
   "ask_human_above": "0.50",
-  "repurchase_window_minutes": 10
+  "repurchase_window_minutes": 10,
+  "screening": {
+    "targets": [
+      { "name": "seller", "payTo": "env:SELLER_PAY_TO", "mainnet": "env:SELLER_MAINNET_ADDRESS" },
+      { "name": "risky", "payTo": "env:RISKY_PAY_TO", "mainnet": "env:RISKY_MAINNET_ADDRESS" }
+    ]
+  }
 }

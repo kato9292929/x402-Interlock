@@ -5,7 +5,16 @@ import { x402HTTPClient, x402Client } from "@x402/core/client";
 import type { PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { fromAtomic } from "./amount";
 import { Ledger, type LedgerEvent } from "./ledger";
-import { evaluatePolicy, loadPolicy, type Decision, type GateResult, type PaymentOption, type ReasonCode } from "./policy";
+import {
+  evaluatePolicy,
+  loadPolicy,
+  mainnetScreeningAddress,
+  type Decision,
+  type GateResult,
+  type PaymentOption,
+  type ReasonCode,
+  type TestnetAddress,
+} from "./policy";
 import { screen } from "./screening";
 import { buyerAddress, signApproved } from "./signer";
 import { createApprovalRequest, loadApprovalRequest, verifyApproval, type VerificationOutcome } from "./world";
@@ -97,10 +106,12 @@ export async function evaluate(input: { url: string; purpose: string; run_id: st
   // option that would be paid, screen exactly that one, then decide for real.
   const pre = evaluatePolicy(policy, candidate, { verdict: "SAFE", reasons: [] }, ctx);
   const target = (pre.selected ?? options[0]) as (typeof options)[number];
-  const report = await screen(target, buyerAddress(), new URL(input.url).origin, policy.token_decimals);
+  const payToMainnet = mainnetScreeningAddress(policy, target.payTo as TestnetAddress);
+  const report = await screen(target, payToMainnet, buyerAddress(), new URL(input.url).origin, policy.token_decimals);
   l.append(decision_id, "screening_result", {
     provider: "intercepta",
     target: { payTo: target.payTo, asset: target.asset, network: target.network, amount: target.amount },
+    screened_as: report.screened_as ?? null,
     verdict: report.verdict,
     reasons: report.reasons,
     checks: report.checks,
