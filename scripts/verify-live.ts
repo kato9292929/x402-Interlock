@@ -11,6 +11,7 @@ import { createPublicClient, erc20Abi, http } from "viem";
 import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { deepScanAddress, quickScanAddress, scanMessage, scanToken, type CheckResult } from "../lib/intercepta";
+import { loadPolicy, type MainnetAddress } from "../lib/policy";
 import { loadScreeningConfig, transferAuthorizationTypedData } from "../lib/screening";
 
 const LOG = path.join(process.cwd(), "data", "live-checks.jsonl");
@@ -25,28 +26,45 @@ function record(name: string, ok: boolean, detail: unknown) {
 }
 
 async function intercepta() {
+  // Same inputs the gate uses: the mainnet stand-ins from config/policy.json, Base (8453).
   const cfg = loadScreeningConfig();
-  const rule = { blockAtScore: cfg.address_block_if_toxic_score_at_least, blockOnAnyTrait: cfg.address_block_if_any_trait };
+  const policy = loadPolicy();
+  const addressRule = { blockAtScore: cfg.address_block_if_toxic_score_at_least, blockOnAnyTrait: cfg.address_block_if_any_trait };
+  const messageRule = { blockRiskGroups: cfg.message.block_risk_groups, passRiskGroups: cfg.message.pass_risk_groups };
   const t = 15_000;
+  const chainId = cfg.screening_chain_id;
   const buyer = privateKeyToAccount(process.env.BUYER_PRIVATE_KEY as `0x${string}`).address;
-  const targets = [process.env.SELLER_PAY_TO, process.env.RISKY_PAY_TO].filter(Boolean) as string[];
-  const baseUsdc = cfg.asset_to_mainnet[USDC_SEPOLIA.toLowerCase()];
+  const asset = cfg.asset_to_mainnet[USDC_SEPOLIA.toLowerCase()] as MainnetAddress;
+  const targets = policy.screening?.targets ?? [];
+  if (!targets.length) console.log("!! no screening targets resolved: set SELLER_PAY_TO / SELLER_MAINNET_ADDRESS (and RISKY_*)");
+
   const checks: CheckResult[] = [];
-  for (const a of targets) {
-    checks.push(await quickScanAddress(a, rule, t));
-    checks.push(await deepScanAddress(a, rule, t));
+  for (const target of targets) {
+    const addr = target.mainnet as MainnetAddress;
+    checks.push(await quickScanAddress(addr, addressRule, t));
+    checks.push(await deepScanAddress(addr, addressRule, t));
   }
-  checks.push(await scanToken(baseUsdc, 8453, t));
-  const typed = transferAuthorizationTypedData(
-    buyer,
-    { scheme: "exact", network: "eip155:84532", asset: USDC_SEPOLIA, payTo: targets[0], amount: "10000", extra: { name: "USDC", version: "2" } },
-    8453,
-    baseUsdc,
-  );
-  checks.push(await scanMessage(buyer, typed, 8453, process.env.PUBLIC_BASE_URL ?? "http://localhost:3000", t));
+  checks.push(await scanToken(asset, chainId, t));
+  for (const target of targets) {
+    const typed = transferAuthorizationTypedData({
+      from: buyer,
+      to: target.mainnet as MainnetAddress,
+      value: "10000",
+      chainId,
+      verifyingContract: asset,
+      extra: { name: "USD Coin", version: "2" },
+    });
+    checks.push(await scanMessage(buyer, typed, String(chainId), process.env.PUBLIC_BASE_URL ?? "http://localhost:3000", messageRule, t));
+  }
   for (const c of checks) {
-    // "ok" = the API answered 2xx with a body the gate understands (SAFE or RISKY), not that it is safe.
-    record(`intercepta.${c.check} ${c.target}`, c.verdict !== "UNAVAILABLE", c);
+    // Logged as-is. "answered" = HTTP 2xx; the gate's verdict is shown separately and not changed here.
+    record(`intercepta.${c.check} ${c.target}`, !!c.http_status && c.http_status >= 200 && c.http_status < 300, {
+      http_status: c.http_status ?? null,
+      gate_verdict: c.verdict,
+      gate_reasons: c.reasons,
+      error: c.error ?? null,
+      body: c.response ?? null,
+    });
   }
 }
 
