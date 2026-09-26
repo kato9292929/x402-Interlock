@@ -17,3 +17,7 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~02:50 | `lib/seller.ts`, `app/api/**`, `scripts/agent.ts` | Claude Code | typecheck + build; facilitator unreachable from build env |
 | 09-26 ~03:00 | `app/page.tsx`, `app/approve/**`, `lib/timeline.ts`, CSS | Claude Code | rendered with Playwright against test ledger |
 | 09-26 ~03:10 | `README.md`, `FEEDBACK.md` | Claude Code | n/a |
+| 09-26 ~15:20 | `spec/03-live-api-alignment.md` | Claude Code (copied second brief) | n/a |
+| 09-26 ~15:30 | `lib/intercepta.ts` (Scan Message to official spec), `lib/policy.ts`, `lib/screening.ts`, `lib/gate.ts`, `config/*.json`, `.env.example` | Claude Code | unit + integration tests (44); live API **not** verified |
+| 09-26 ~15:40 | `scripts/verify-live.ts` | Claude Code | runs; all external hosts blocked in build container |
+| 09-26 ~15:50 | `README.md`, `docs/DEMO.md`, `FEEDBACK.md` | Claude Code | n/a |
