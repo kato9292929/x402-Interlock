@@ -5,7 +5,7 @@
 
 ## Intercepta
 
-- Time to first successful call: _TODO (owner: record the time of the first 2xx response)_
+- Time to first successful call: by 2026-09-26 ~19:14 JST, the first live gate run (`risky` BLOCKed with SCREENING_RISKY, from the run id). Owner: replace with the exact time from `data/ledger.jsonl` if needed.
 - Confusing:
   - _TODO (owner: after `npm run verify-live`, note anything about the response shapes that was unclear from the reference pages)_
   - (build) Scan Message takes the EIP-712 payload as-is, so x402's EIP-3009 `TransferWithAuthorization` fits. But the meaning of each `riskGroup` value has to be looked up in the risk library before a gate can act on it.

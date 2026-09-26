@@ -253,16 +253,16 @@ The project must not claim unverified features as done, so this table records ex
 | Gate flow: PAY / CAP / BLOCK / ASK_HUMAN, all four human exits, replay, wrong owner, fail-closed, mainnet-only screening inputs | Integration test with local stand-ins |
 | Signing an x402 `exact` payload with the server-held key | Locally (real EIP-712 signature via `@x402/evm`) |
 | UI (timeline, approval page) | Rendered against a test ledger |
+| **Scenario 1 live: Base Sepolia settlement via the x402.org facilitator** | Owner's Mac, 2026-09-26 19:26 JST: `quote` → `PAY WITHIN_POLICY` → `PAID`, tx [`0xd5f965ea…bc080175`](https://sepolia.basescan.org/tx/0xd5f965ea346d1cb71d7c63f42df3c1ef4d83108dfe96e84da873b3f5bc080175) |
+| **Scenario 2 live: Intercepta blocks a flagged payee** | Owner's Mac, 2026-09-26 ~19:14 JST: `risky` → `BLOCK SCREENING_RISKY`, from the real Intercepta API |
 
 **Not yet verified**
 
 | Part | Notes |
 |---|---|
-| Intercepta Quick Scan / Deep Scan / Scan Token, live | Paths, auth header and response reading now follow the official reference (spec/04), but no real API call has been made yet |
-| Intercepta Scan Message, live | Request body follows the official spec. `riskGroup` values are not classified yet, so every payment is currently BLOCKed by this check until a real response has been classified |
+| Intercepta Scan Message `riskGroup` classification in this repo | Scenario 1 passed on the owner's machine, but `config/screening.json` here still classifies no `riskGroup`, so a fresh clone BLOCKs at Scan Message. The value seen live must be committed |
 | World ID sandbox approve / reject, live | Needs World App on the owner's phone |
 | Whether sandbox verification needs an API key, and in which header | Not in the official docs checked; settle with `npm run verify-live -- world` |
-| Base Sepolia settlement via the x402.org facilitator | Not yet run |
 
 ## Starter kits and libraries
 

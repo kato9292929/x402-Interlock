@@ -28,3 +28,5 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~18:50 | `lib/world.ts` (optional API key, sandbox/staging only; 401/403 diagnosis), `scripts/verify-live.ts` (World verify probe), tests, `.env.example`, `README.md`, `FEEDBACK.md` | Claude Code | 56 tests pass; live World **not** verified |
 | 09-26 ~19:30 | owner's live run: `risky` BLOCKed with SCREENING_RISKY from the real API; `quote` BLOCKed because Scan Token returned HTTP 429 | owner (Mac) | live |
 | 09-26 ~19:40 | `lib/intercepta.ts` (token-scan cache, explicit 429 reason), `lib/screening.ts`, `config/screening.json`, timeline "(cached)", tests, `README.md`, `FEEDBACK.md` | Claude Code | 63 tests pass |
+| 09-26 19:26 | owner's live run: `quote` PAID on Base Sepolia, tx 0xd5f965ea346d1cb71d7c63f42df3c1ef4d83108dfe96e84da873b3f5bc080175 | owner (Mac) | live |
+| 09-26 ~19:50 | `README.md` status, `FEEDBACK.md` first-call time | Claude Code | n/a |
