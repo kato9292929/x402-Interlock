@@ -8,9 +8,8 @@ Run on the owner's Mac (the World ID steps need World App on a phone).
 cp .env.example .env.local   # fill in every value
 npm install
 npm run verify-live          # all four Intercepta calls should answer 2xx; check data/live-checks.jsonl
-# Scan Message's riskGroup is not classified yet, so every payment BLOCKs until the riskGroup
-# seen for the clean seller in verify-live is added to message.pass_risk_groups in
-# config/screening.json. Do this before recording scenario 1.
+# verify-live makes ~7 Intercepta calls; skip it right before recording to stay under the rate limit.
+# .env.local: WORLD_ENVIRONMENT=production, WORLD_REQUIRE_USER_PRESENCE=0 (the defaults).
 npm run dev                  # keep running; open http://localhost:3000 (timeline)
 ```
 
@@ -42,7 +41,7 @@ npm run agent -- risky
 Expected:
 - `[gate] BLOCK SCREENING_RISKY -> BLOCKED`
 - `[agent] not paid (BLOCKED)`
-- timeline: a red **BLOCK / Stopped** card. Under Intercepta, the address scan of `RISKY_MAINNET_ADDRESS` shows the risk traits Intercepta returned
+- timeline: a red **BLOCK / Stopped** card. Under Intercepta, the address scan of `RISKY_MAINNET_ADDRESS` (a Garantex address) shows `sanction_address` and `blacklist`
 - nothing is signed and no transaction is sent
 
 ## Scenario 3: high-value payment → owner must approve with World ID

@@ -30,3 +30,5 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~19:40 | `lib/intercepta.ts` (token-scan cache, explicit 429 reason), `lib/screening.ts`, `config/screening.json`, timeline "(cached)", tests, `README.md`, `FEEDBACK.md` | Claude Code | 63 tests pass |
 | 09-26 19:26 | owner's live run: `quote` PAID on Base Sepolia, tx 0xd5f965ea346d1cb71d7c63f42df3c1ef4d83108dfe96e84da873b3f5bc080175 | owner (Mac) | live |
 | 09-26 ~19:50 | `README.md` status, `FEEDBACK.md` first-call time | Claude Code | n/a |
+| 09-26 evening | owner's live runs: World ID approve → paid, reject → HUMAN_REJECTED, expire → not paid (production env, presence off); Scan Message riskGroup=Low | owner (Mac) | live |
+| 09-26 ~20:00 | `lib/world.ts` defaults (production, presence off), `config/screening.json` (riskGroup Low passes), `scripts/first-success.ts`, tests, `README.md`, `FEEDBACK.md`, `docs/DEMO.md`, `.env.example` | Claude Code | 64 tests pass |

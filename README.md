@@ -37,7 +37,7 @@ Official reference: https://docs.web3antivirus.io/reference/
 | Scan Token `GET …/token-intelligence/token/{address}/risks?chainId=8453` · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L195`](lib/intercepta.ts#L195), reading `TokenRiskAnalysisV2Response` [L98](lib/intercepta.ts#L98) |
 | Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L230`](lib/intercepta.ts#L230), verdict from `riskGroup` [L210](lib/intercepta.ts#L210) |
 | Testnet payTo → mainnet screening address | [`lib/policy.ts#L94`](lib/policy.ts#L94) |
-| Screening on Base mainnet + aggregation | [`lib/screening.ts#L91`](lib/screening.ts#L91) |
+| Screening on Base mainnet + aggregation | [`lib/screening.ts#L93`](lib/screening.ts#L93) |
 | Called from the gate, before any signing | [`lib/gate.ts#L110`](lib/gate.ts#L110) |
 
 ### How Intercepta results are judged
@@ -95,9 +95,9 @@ The API key is not saved.
 
 | What | Where |
 |---|---|
-| RP-signed request (`signRequest`, computed locally, TTL) | [`lib/world.ts#L84`](lib/world.ts#L84) |
-| **Server-side verification** | [`lib/world.ts#L128`](lib/world.ts#L128): nonce / action / environment ([L133](lib/world.ts#L133)), signal = this payment ([L142](lib/world.ts#L142)), World Developer API `POST https://developer.world.org/api/v4/verify/{rp_id}` ([L153](lib/world.ts#L153)), owner nullifier ([L183](lib/world.ts#L183)) |
-| Sandbox/staging API key (optional, never sent for production) | [`lib/world.ts#L29`](lib/world.ts#L29), 401/403 diagnosis [L166](lib/world.ts#L166) |
+| RP-signed request (`signRequest`, computed locally, TTL) | [`lib/world.ts#L85`](lib/world.ts#L85) |
+| **Server-side verification** | [`lib/world.ts#L130`](lib/world.ts#L130): nonce / action / environment ([L135](lib/world.ts#L135)), signal = this payment ([L144](lib/world.ts#L144)), World Developer API `POST https://developer.world.org/api/v4/verify/{rp_id}` ([L155](lib/world.ts#L155)), owner nullifier ([L185](lib/world.ts#L185)) |
+| Sandbox/staging API key (optional, never sent for production) | [`lib/world.ts#L30`](lib/world.ts#L30), 401/403 diagnosis [L168](lib/world.ts#L168) |
 | Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L282`](lib/gate.ts#L282), [L304](lib/gate.ts#L304), [L264](lib/gate.ts#L264), [L310](lib/gate.ts#L310) |
 | IDKit widget (relays the proof only) | [`app/approve/[id]/approval-client.tsx#L101`](app/approve/%5Bid%5D/approval-client.tsx#L101) |
 
@@ -122,24 +122,21 @@ reject or expiry is refused.
   **production** app (a staging app's RP registration is refused), so create a production app
   and register the RP inside it. The RP signature is computed locally with `signRequest`. No API
   signs it for us.
-- **Sandbox verification and API keys.** Reportedly, verifying sandbox or staging proofs now
-  requires the app team's API key. Production verification needs none. We could not confirm this
-  or find the header name in the official sources checked on 2026-09-26:
-  `developer-docs` `openapi/developer-portal.json` (no `security` on `POST /api/v4/verify/{rp_id}`),
-  `world-id/sandbox/sandbox-access.mdx` ("Nothing else is required"),
-  `@worldcoin/idkit-core` 4.3.0 and `@worldcoin/human-in-the-loop` 0.2.1 (no key sent).
-  So the key and its header name are both configuration:
-  - Set `WORLD_API_KEY` and `WORLD_API_KEY_HEADER`. They are sent only when `WORLD_ENVIRONMENT`
-    is `sandbox` or `staging`, never for production.
-  - Setting only one of the two is an error, raised before the owner is asked to scan anything.
-  - If World answers 401/403 with its own JSON, the approval fails with
-    `world_verify_unauthorized …`, which says the API key is the likely cause.
-  - `npm run verify-live -- world` probes the endpoint with a deliberately invalid proof and
-    records World's status and body, to settle whether a key is required.
+- **Environment: production.** Verifying in `sandbox` was refused live with
+  `environment_not_allowed`, so `WORLD_ENVIRONMENT` defaults to `production`. Approvals are
+  verified against production with no API key, which worked live on 2026-09-26.
+- **Sandbox/staging API key (kept, unused by default).** We had been told that sandbox/staging
+  verification requires the team API key. The official sources we checked on 2026-09-26 name no
+  header for it (`openapi/developer-portal.json` has no `security` on
+  `POST /api/v4/verify/{rp_id}`), so the key and its header are configuration
+  (`WORLD_API_KEY`, `WORLD_API_KEY_HEADER`). They are sent only for sandbox/staging, never for
+  production. A World 401/403 fails with `world_verify_unauthorized …`, and
+  `npm run verify-live -- world` probes the endpoint.
 
 ## Which credential, and why it is enough
 
-We request **`proof_of_human` (Orb) only**, with `require_user_presence` enabled, and no legacy proofs.
+We request **`proof_of_human` (Orb) only**, with no legacy proofs. `require_user_presence` is
+**off by default** (`WORLD_REQUIRE_USER_PRESENCE=0`).
 
 - **The question the gate asks is "is the agent's owner, a real person, present right now and
   approving this exact payment?"** It is not asking who the person is, how old they are, or
@@ -148,8 +145,12 @@ We request **`proof_of_human` (Orb) only**, with `require_user_presence` enabled
 - **Why not device / selfie?** The threat is an agent (or whoever controls it) approving its
   own spending. A device-level credential can be satisfied by software on a compromised
   phone. `proof_of_human` is the strongest assurance that a unique human made the proof.
-- **Why `require_user_presence`?** A proof-of-human says someone is human. The presence
-  check says that person is *there now*, which matters for approving a payment.
+- **Why `require_user_presence` is off.** It adds a fresh face check in World App. In live testing
+  (2026-09-26) that check failed in World App, and the approval never completed. Without it,
+  "this person, now" still holds: every proof carries the RP nonce issued for this decision,
+  expires with the request's short TTL (180 s by default), and must come from the pinned owner's
+  nullifier. So a stale or replayed proof is still refused. Set `WORLD_REQUIRE_USER_PRESENCE=1`
+  to turn the face check back on where World App supports it.
 - **Why the owner and not just any human?** The action is stable per agent
   (`interlock-approve-payment`), so the same person always produces the same nullifier. The
   first approval pins the owner's nullifier (`data/owner.json`, or `WORLD_OWNER_NULLIFIER`).
@@ -211,7 +212,8 @@ npm run dev                    # http://localhost:3000  (timeline)
 | `RISKY_MAINNET_ADDRESS` | The risky **mainnet** address pinned in Intercepta's ETHGlobal Discord channel |
 | `INTERCEPTA_API_KEY` | From intercepta.io/ethglobal |
 | `NEXT_PUBLIC_WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_SIGNING_KEY` | From developer.world.org: a **production** app with an RP registered inside it |
-| `WORLD_ENVIRONMENT` | `sandbox` (default), `staging` or `production` |
+| `WORLD_ENVIRONMENT` | `production` (default). `sandbox` is refused by World with `environment_not_allowed` |
+| `WORLD_REQUIRE_USER_PRESENCE` | `0` (default). `1` adds World App's face check, which failed in live testing |
 | `WORLD_API_KEY`, `WORLD_API_KEY_HEADER` | Optional. Sent only for sandbox/staging verification; set both or neither (see World ID setup notes) |
 | `AGENT_TOKEN` | Shared secret between the agent script and the gate API |
 
@@ -243,26 +245,24 @@ stand-ins exist only in the test file. The application code always calls the rea
 
 ## Status: what has been verified
 
-The project must not claim unverified features as done, so this table records exactly what has and has not been tested.
+Everything below was run, not just written. Live runs were on the owner's Mac on 2026-09-26
+against the real services (Intercepta API, World ID production verify, Base Sepolia via the
+x402.org facilitator).
 
-**Verified**
+| Part | How | Result |
+|---|---|---|
+| Scenario 1: safe, small payment | Live | `quote` → `PAY WITHIN_POLICY` → `PAID`, tx [`0xd5f965ea346d1cb71d7c63f42df3c1ef4d83108dfe96e84da873b3f5bc080175`](https://sepolia.basescan.org/tx/0xd5f965ea346d1cb71d7c63f42df3c1ef4d83108dfe96e84da873b3f5bc080175). Scan Message answered `messageType=TransferWithAuthorization`, `riskGroup=Low` → SAFE |
+| Scenario 2: flagged payee | Live | `risky` (screened as a Garantex address; traits `sanction_address`, `blacklist`) → `BLOCK SCREENING_RISKY`, not signed |
+| Scenario 3a: owner approves with World ID | Live | `report` → `ASK_HUMAN` → World ID `proof_of_human` verified server-side → **Approved and paid** |
+| Scenario 3b: owner rejects | Live | → `HUMAN_REJECTED`, not paid |
+| Approval expires | Live | → **Expired: not paid** |
+| Cancel, replay, wrong owner, CAP, run limit, repurchase, fail-closed, rate limit (429), token cache, mainnet-only screening inputs | Integration + unit tests (64) with local stand-ins | All pass |
+| Ledger hash chain, redaction | Unit tests; the timeline checks the chain on every load | Pass |
 
-| Part | How |
-|---|---|
-| Policy engine, ledger hash chain, redaction | Unit tests |
-| Gate flow: PAY / CAP / BLOCK / ASK_HUMAN, all four human exits, replay, wrong owner, fail-closed, mainnet-only screening inputs | Integration test with local stand-ins |
-| Signing an x402 `exact` payload with the server-held key | Locally (real EIP-712 signature via `@x402/evm`) |
-| UI (timeline, approval page) | Rendered against a test ledger |
-| **Scenario 1 live: Base Sepolia settlement via the x402.org facilitator** | Owner's Mac, 2026-09-26 19:26 JST: `quote` → `PAY WITHIN_POLICY` → `PAID`, tx [`0xd5f965ea…bc080175`](https://sepolia.basescan.org/tx/0xd5f965ea346d1cb71d7c63f42df3c1ef4d83108dfe96e84da873b3f5bc080175) |
-| **Scenario 2 live: Intercepta blocks a flagged payee** | Owner's Mac, 2026-09-26 ~19:14 JST: `risky` → `BLOCK SCREENING_RISKY`, from the real Intercepta API |
-
-**Not yet verified**
-
-| Part | Notes |
-|---|---|
-| Intercepta Scan Message `riskGroup` classification in this repo | Scenario 1 passed on the owner's machine, but `config/screening.json` here still classifies no `riskGroup`, so a fresh clone BLOCKs at Scan Message. The value seen live must be committed |
-| World ID sandbox approve / reject, live | Needs World App on the owner's phone |
-| Whether sandbox verification needs an API key, and in which header | Not in the official docs checked; settle with `npm run verify-live -- world` |
+Live findings that changed defaults:
+- World `sandbox` verification is refused (`environment_not_allowed`), so the default is `production`.
+- `require_user_presence` failed in World App, so the default is off (see "Which credential").
+- The free Intercepta key hit its rate limit (HTTP 429). Token scans are now cached for 10 minutes; the demo used a second key.
 
 ## Starter kits and libraries
 
