@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { interpretAddress, interpretFindings } from "../lib/intercepta";
+import { interpretAddress, interpretFindings, interpretSignature } from "../lib/intercepta";
 
 // These test the parsing rules only. The API itself is never mocked at runtime.
 const rule = { blockAtScore: 1, blockOnAnyTrait: true };
@@ -32,4 +32,12 @@ test("token/message findings", () => {
   assert.equal(interpretFindings({ riskLevel: "high" }).verdict, "RISKY");
   assert.equal(interpretFindings({ detectors: [] }).verdict, "SAFE");
   assert.equal(interpretFindings({ risks: [{ name: "x" }] }).verdict, "RISKY");
+});
+
+test("scan message: verdict from riskGroup; unclassified or missing -> UNAVAILABLE", () => {
+  const rule = { blockRiskGroups: ["g-block"], passRiskGroups: ["g-pass"] };
+  assert.equal(interpretSignature({ riskGroup: "g-pass" }, rule).verdict, "SAFE");
+  assert.equal(interpretSignature({ riskGroup: "g-block" }, rule).verdict, "RISKY");
+  assert.equal(interpretSignature({ riskGroup: "something-new" }, rule).verdict, "UNAVAILABLE");
+  assert.equal(interpretSignature({}, rule).verdict, "UNAVAILABLE");
 });

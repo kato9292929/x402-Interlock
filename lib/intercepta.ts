@@ -1,4 +1,9 @@
-// Intercepta (formerly Web3 Antivirus) public API client.
+// Intercepta (Web3 Antivirus API) client. Official reference: https://docs.web3antivirus.io/reference/
+//   Scan Message       https://docs.web3antivirus.io/reference/  (analysis/signature; spec given by the owner, see spec/03)
+//   Quick Scan Address https://docs.web3antivirus.io/reference/quick-scan-address   -- NOT yet checked against the page
+//   Deep Scan Address  https://docs.web3antivirus.io/reference/scan-address         -- NOT yet checked against the page
+//   Scan Token         https://docs.web3antivirus.io/reference/scan-token           -- NOT yet checked against the page
+// All screening is against Base mainnet (chainId 8453): the risk data is mainnet-only.
 // Every call goes to the real API. There is no mock or fallback value: if the API
 // does not answer with a recognisable body, the check is UNAVAILABLE and the gate BLOCKs.
 
@@ -125,18 +130,40 @@ export function scanToken(token: string, chainId: number, timeoutMs: number) {
   );
 }
 
-/** Screen the typed-data message the signer is about to sign, before it is signed. */
-export function scanMessage(from: string, typedData: unknown, chainId: number, website: string, timeoutMs: number) {
+export interface MessageRule {
+  /** riskGroup values that BLOCK. From https://docs.web3antivirus.io/reference/scam-and-risk-library */
+  blockRiskGroups: string[];
+  /** riskGroup values that pass. Any value in neither list is UNAVAILABLE (fail closed). */
+  passRiskGroups: string[];
+}
+
+/** Interpret a Scan Message body. The verdict comes from `riskGroup`; the rest is kept as evidence. */
+export function interpretSignature(json: unknown, rule: MessageRule): { verdict: CheckVerdict; reasons: string[] } {
+  const o = (json ?? {}) as Record<string, unknown>;
+  const group = o.riskGroup;
+  if (typeof group !== "string") return { verdict: "UNAVAILABLE", reasons: ["no riskGroup in scan message response"] };
+  const reasons = [`riskGroup=${group}`];
+  if (rule.blockRiskGroups.includes(group)) return { verdict: "RISKY", reasons };
+  if (rule.passRiskGroups.includes(group)) return { verdict: "SAFE", reasons };
+  return { verdict: "UNAVAILABLE", reasons: [...reasons, "riskGroup not classified in config/screening.json"] };
+}
+
+/**
+ * Screen the EIP-712 message the signer is about to sign, before it is signed.
+ * Body per the Scan Message reference: `message` is the EIP-712 payload itself
+ * (domain, types, primaryType, message) and `chainId` is a string enum ("8453" = Base).
+ */
+export function scanMessage(from: string, typedData: unknown, chainId: string, website: string, rule: MessageRule, timeoutMs: number) {
   return run(
     "scan_message",
     from,
     () =>
       call("POST", `/api/public/v2/extension/analysis/signature`, timeoutMs, {
         from,
+        message: typedData,
         website,
         chainId,
-        message: JSON.stringify(typedData),
       }),
-    interpretFindings,
+    (j) => interpretSignature(j, rule),
   );
 }
