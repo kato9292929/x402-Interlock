@@ -89,8 +89,9 @@ The API key is not saved.
 
 | What | Where |
 |---|---|
-| RP-signed request (`signRequest`, TTL) | [`lib/world.ts#L54`](lib/world.ts#L54) |
-| **Server-side verification** | [`lib/world.ts#L98`](lib/world.ts#L98): nonce / action / environment ([L103](lib/world.ts#L103)), signal = this payment ([L112](lib/world.ts#L112)), World Developer API `POST /api/v4/verify/{rp_id}` ([L117](lib/world.ts#L117)), owner nullifier ([L143](lib/world.ts#L143)) |
+| RP-signed request (`signRequest`, computed locally, TTL) | [`lib/world.ts#L84`](lib/world.ts#L84) |
+| **Server-side verification** | [`lib/world.ts#L128`](lib/world.ts#L128): nonce / action / environment ([L133](lib/world.ts#L133)), signal = this payment ([L142](lib/world.ts#L142)), World Developer API `POST https://developer.world.org/api/v4/verify/{rp_id}` ([L153](lib/world.ts#L153)), owner nullifier ([L183](lib/world.ts#L183)) |
+| Sandbox/staging API key (optional, never sent for production) | [`lib/world.ts#L29`](lib/world.ts#L29), 401/403 diagnosis [L166](lib/world.ts#L166) |
 | Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L282`](lib/gate.ts#L282), [L304](lib/gate.ts#L304), [L264](lib/gate.ts#L264), [L310](lib/gate.ts#L310) |
 | IDKit widget (relays the proof only) | [`app/approve/[id]/approval-client.tsx#L101`](app/approve/%5Bid%5D/approval-client.tsx#L101) |
 
@@ -107,6 +108,28 @@ checked all of the following:
 Reject, expire and cancel can only *prevent* a payment, so they need no proof. Approve is the only
 path that ever leads to a signature. The first terminal state wins, so a late approval after a
 reject or expiry is refused.
+
+### World ID setup notes
+
+- **RP registration.** `rp_id` and the signing key belong to a Relying Party registered in the
+  Developer Portal, separate from `app_id`. World ID 4.0 RPs can only be registered in a
+  **production** app (a staging app's RP registration is refused), so create a production app
+  and register the RP inside it. The RP signature is computed locally with `signRequest`. No API
+  signs it for us.
+- **Sandbox verification and API keys.** Reportedly, verifying sandbox or staging proofs now
+  requires the app team's API key. Production verification needs none. We could not confirm this
+  or find the header name in the official sources checked on 2026-09-26:
+  `developer-docs` `openapi/developer-portal.json` (no `security` on `POST /api/v4/verify/{rp_id}`),
+  `world-id/sandbox/sandbox-access.mdx` ("Nothing else is required"),
+  `@worldcoin/idkit-core` 4.3.0 and `@worldcoin/human-in-the-loop` 0.2.1 (no key sent).
+  So the key and its header name are both configuration:
+  - Set `WORLD_API_KEY` and `WORLD_API_KEY_HEADER`. They are sent only when `WORLD_ENVIRONMENT`
+    is `sandbox` or `staging`, never for production.
+  - Setting only one of the two is an error, raised before the owner is asked to scan anything.
+  - If World answers 401/403 with its own JSON, the approval fails with
+    `world_verify_unauthorized …`, which says the API key is the likely cause.
+  - `npm run verify-live -- world` probes the endpoint with a deliberately invalid proof and
+    records World's status and body, to settle whether a key is required.
 
 ## Which credential, and why it is enough
 
@@ -181,7 +204,9 @@ npm run dev                    # http://localhost:3000  (timeline)
 | `SELLER_MAINNET_ADDRESS` | A clean **mainnet** address that Intercepta screens for the seller |
 | `RISKY_MAINNET_ADDRESS` | The risky **mainnet** address pinned in Intercepta's ETHGlobal Discord channel |
 | `INTERCEPTA_API_KEY` | From intercepta.io/ethglobal |
-| `NEXT_PUBLIC_WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_SIGNING_KEY` | From developer.world.org (sandbox) |
+| `NEXT_PUBLIC_WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_SIGNING_KEY` | From developer.world.org: a **production** app with an RP registered inside it |
+| `WORLD_ENVIRONMENT` | `sandbox` (default), `staging` or `production` |
+| `WORLD_API_KEY`, `WORLD_API_KEY_HEADER` | Optional. Sent only for sandbox/staging verification; set both or neither (see World ID setup notes) |
 | `AGENT_TOKEN` | Shared secret between the agent script and the gate API |
 
 In the World developer portal, allow repeated verifications for the action
@@ -194,9 +219,9 @@ See [`docs/DEMO.md`](docs/DEMO.md) for the commands and the expected result of e
 ### Live checks
 
 ```bash
-npm run verify-live   # Intercepta (all 4 calls, raw status + body), facilitator support for
-                      # Base Sepolia, buyer USDC balance; each result is timestamped in
-                      # data/live-checks.jsonl
+npm run verify-live   # Intercepta (all 4 calls, raw status + body), World verify probe
+                      # (is an API key required?), facilitator support for Base Sepolia,
+                      # buyer USDC balance; each result is timestamped in data/live-checks.jsonl
 ```
 
 ### Tests
@@ -230,6 +255,7 @@ The project must not claim unverified features as done, so this table records ex
 | Intercepta Quick Scan / Deep Scan / Scan Token, live | Paths, auth header and response reading now follow the official reference (spec/04), but no real API call has been made yet |
 | Intercepta Scan Message, live | Request body follows the official spec. `riskGroup` values are not classified yet, so every payment is currently BLOCKed by this check until a real response has been classified |
 | World ID sandbox approve / reject, live | Needs World App on the owner's phone |
+| Whether sandbox verification needs an API key, and in which header | Not in the official docs checked; settle with `npm run verify-live -- world` |
 | Base Sepolia settlement via the x402.org facilitator | Not yet run |
 
 ## Starter kits and libraries

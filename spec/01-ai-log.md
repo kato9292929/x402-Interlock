@@ -24,3 +24,5 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~16:10 | `spec/04-intercepta-official-spec.md` | Claude Code (copied owner's paste of the official reference) | n/a |
 | 09-26 ~16:20 | `lib/intercepta.ts`, `lib/screening.ts`, `lib/policy.ts`, `config/screening.json`, `scripts/verify-live.ts`, tests, UI badge colours | Claude Code | 51 tests pass; live API **not** verified |
 | 09-26 ~16:30 | `README.md`, `docs/DEMO.md` | Claude Code | README line links recomputed |
+| 09-26 ~18:40 | `spec/05-world-id-sandbox-api-key.md`; research in idkit-core 4.3.0, idkit-server 1.1.1, human-in-the-loop 0.2.1, worldcoin/developer-docs @ 10536b5 | Claude Code | header name for the sandbox API key: **not found** in any of them |
+| 09-26 ~18:50 | `lib/world.ts` (optional API key, sandbox/staging only; 401/403 diagnosis), `scripts/verify-live.ts` (World verify probe), tests, `.env.example`, `README.md`, `FEEDBACK.md` | Claude Code | 56 tests pass; live World **not** verified |

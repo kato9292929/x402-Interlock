@@ -21,5 +21,7 @@
   - (build) `@worldcoin/human-in-the-loop` is tied to the Vercel Workflow SDK. A framework-free server was easier to build directly on IDKit 4 (`signRequest` + verify API).
   - _TODO_
 - Missing features/docs:
+  - (build) We heard that sandbox/staging verification now requires the team API key (after the `environment` fix), but the published docs we found still say the opposite. The OpenAPI spec for `POST /api/v4/verify/{rp_id}` has no `security`, and the sandbox guide says "Nothing else is required". The key's header name is not documented anywhere we could find.
+  - (build) The idkit-core README still points to `developer.worldcoin.org/api/v4/verify`, while the docs use `developer.world.org`.
   - (build) A documented pattern for binding a proof to a specific transaction (signal = hash of payment params) and for pinning an owner's nullifier across many approvals.
 - One improvement that would help most: _TODO_
