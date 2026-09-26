@@ -9,7 +9,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "next typegen && tsc --noEmit",
     "agent": "tsx --env-file-if-exists=.env.local scripts/agent.ts",
-    "verify-live": "tsx --env-file-if-exists=.env.local scripts/verify-live.ts"
+    "verify-live": "tsx --env-file-if-exists=.env.local scripts/verify-live.ts",
+    "first-success": "tsx scripts/first-success.ts"
   },
   "dependencies": {
     "@worldcoin/idkit": "^4.3.0",
