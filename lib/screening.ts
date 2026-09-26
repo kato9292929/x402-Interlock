@@ -16,6 +16,8 @@ interface ScreeningConfig {
   message: { block_risk_groups: string[]; pass_risk_groups: string[] };
   deep_scan_above: string;
   timeout_ms: number;
+  /** How long an answered token scan is reused (per chainId + token). 0 disables. Default 10. */
+  token_cache_minutes?: number;
 }
 
 export type { ScreeningConfig };
@@ -115,7 +117,7 @@ export async function screen(
   });
   const checks = await Promise.all([
     deep ? deepScanAddress(payToMainnet, rules.address, t) : quickScanAddress(payToMainnet, rules.address, t),
-    scanToken(asset, String(chainId), rules.token, t),
+    scanToken(asset, String(chainId), rules.token, t, (cfg.token_cache_minutes ?? 10) * 60_000),
     scanMessage(buyer, typed, String(chainId), website, rules.message, t),
   ]);
 

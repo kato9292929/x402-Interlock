@@ -4,7 +4,7 @@
     "All screening is on Base mainnet (chainId 8453): Intercepta's risk data is mainnet-only; payments settle on Base Sepolia. Which mainnet address stands in for each payTo is in config/policy.json (screening.targets).",
     "address: traits tied directly to asset theft or sanctions BLOCK; suspicious-but-not-conclusive traits need the owner (ASK_HUMAN); no traits passes. The 15 trait names of ToxicScoreShortResponseV2 are all classified; an unknown name is UNAVAILABLE (BLOCK).",
     "address: toxicScore is recorded and shown, but never decides on its own: the vendor publishes no threshold for it.",
-    "token: follow the vendor's recommended action (block -> BLOCK, warn -> ASK_HUMAN, info -> pass).",
+    "token: follow the vendor's recommended action (block -> BLOCK, warn -> ASK_HUMAN, info -> pass). Answered token scans are cached per (chainId, token) for token_cache_minutes (0 = off); address scans and Scan Message are never cached.",
     "message: riskGroup values are not listed in the docs; they will be classified from verify-live results. Until then every riskGroup is unclassified -> UNAVAILABLE -> BLOCK (fail closed)."
   ],
   "screening_chain_id": 8453,
@@ -41,6 +41,7 @@
     "block_risk_groups": [],
     "pass_risk_groups": []
   },
+  "token_cache_minutes": 10,
   "deep_scan_above": "0.50",
   "timeout_ms": 8000
 }

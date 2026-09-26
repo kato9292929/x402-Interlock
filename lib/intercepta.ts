@@ -20,6 +20,8 @@ export interface CheckResult {
   reasons: string[];
   http_status?: number;
   response?: unknown; // raw API body, stored in the ledger as evidence
+  /** Set when the answer was served from the token cache instead of a new API call. */
+  cache?: { hit: true; fetched_at: string };
   error?: string;
 }
 
@@ -117,6 +119,19 @@ async function run(
 ): Promise<CheckResult> {
   try {
     const { status, json } = await req();
+    if (status === 429) {
+      // Rate limited: this check cannot answer, which says nothing about the payment itself.
+      const msg = (json as { message?: unknown } | null)?.message;
+      const detail = typeof msg === "string" ? msg : typeof json === "string" && json ? json : "";
+      return {
+        check,
+        target,
+        verdict: "UNAVAILABLE",
+        reasons: [`rate limit reached (HTTP 429)${detail ? `: ${detail}` : ""}`],
+        http_status: status,
+        response: json,
+      };
+    }
     if (status < 200 || status >= 300) {
       return { check, target, verdict: "UNAVAILABLE", reasons: [`HTTP ${status}`], http_status: status, response: json };
     }
@@ -144,13 +159,44 @@ export function deepScanAddress(address: string, rule: AddressRule, timeoutMs: n
   );
 }
 
-export function scanToken(token: string, chainId: string, rule: TokenRule, timeoutMs: number) {
-  return run(
+// Token risk barely changes minute to minute, and the demo screens the same token (Base USDC)
+// on every payment, so answered token scans are cached per (chainId, token) for a short time.
+// Only 2xx answers the gate could interpret are cached; failures (429, timeouts, unknown bodies)
+// are retried on the next payment. Address scans and Scan Message are never cached.
+// Kept on globalThis so every Next.js route bundle shares one cache.
+type TokenCacheEntry = { at: number; status: number; json: unknown };
+const g = globalThis as { __interlockTokenCache?: Map<string, TokenCacheEntry> };
+const tokenCache = (g.__interlockTokenCache ??= new Map());
+
+export function clearTokenCache() {
+  tokenCache.clear();
+}
+
+export async function scanToken(
+  token: string,
+  chainId: string,
+  rule: TokenRule,
+  timeoutMs: number,
+  cacheMs = 0,
+  now = Date.now(),
+): Promise<CheckResult> {
+  const target = `${chainId}:${token}`;
+  const key = `${chainId}:${token.toLowerCase()}`;
+  const hit = cacheMs > 0 ? tokenCache.get(key) : undefined;
+  if (hit && now - hit.at < cacheMs) {
+    const r = await run("scan_token", target, async () => ({ status: hit.status, json: hit.json }), (j) => interpretToken(j, rule));
+    return { ...r, cache: { hit: true, fetched_at: new Date(hit.at).toISOString() } };
+  }
+  let fresh: { status: number; json: unknown } | undefined;
+  const r = await run(
     "scan_token",
-    `${chainId}:${token}`,
-    () => call("GET", `/api/public/v2/extension/token-intelligence/token/${token}/risks?chainId=${chainId}`, timeoutMs),
+    target,
+    async () =>
+      (fresh = await call("GET", `/api/public/v2/extension/token-intelligence/token/${token}/risks?chainId=${chainId}`, timeoutMs)),
     (j) => interpretToken(j, rule),
   );
+  if (cacheMs > 0 && fresh && r.verdict !== "UNAVAILABLE") tokenCache.set(key, { at: now, ...fresh });
+  return r;
 }
 
 export interface MessageRule {
