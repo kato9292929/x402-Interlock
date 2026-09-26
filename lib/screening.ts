@@ -11,11 +11,21 @@ import type { MainnetAddress, PaymentOption, Screening } from "./policy";
 interface ScreeningConfig {
   screening_chain_id: number;
   asset_to_mainnet: Record<string, string>;
-  address_block_if_toxic_score_at_least: number;
-  address_block_if_any_trait: boolean;
+  address: { block_traits: string[]; ask_human_traits: string[] };
+  token: { block_actions: string[]; ask_human_actions: string[]; pass_actions: string[] };
   message: { block_risk_groups: string[]; pass_risk_groups: string[] };
   deep_scan_above: string;
   timeout_ms: number;
+}
+
+export type { ScreeningConfig };
+
+export function rulesFrom(cfg: ScreeningConfig) {
+  return {
+    address: { blockTraits: cfg.address.block_traits, askHumanTraits: cfg.address.ask_human_traits },
+    token: { blockActions: cfg.token.block_actions, askHumanActions: cfg.token.ask_human_actions, passActions: cfg.token.pass_actions },
+    message: { blockRiskGroups: cfg.message.block_risk_groups, passRiskGroups: cfg.message.pass_risk_groups },
+  };
 }
 
 export function loadScreeningConfig(file = process.env.SCREENING_PATH ?? path.join(process.cwd(), "config", "screening.json")): ScreeningConfig {
@@ -86,8 +96,7 @@ export async function screen(
   tokenDecimals: number,
   cfg = loadScreeningConfig(),
 ): Promise<ScreeningReport> {
-  const addressRule = { blockAtScore: cfg.address_block_if_toxic_score_at_least, blockOnAnyTrait: cfg.address_block_if_any_trait };
-  const messageRule = { blockRiskGroups: cfg.message.block_risk_groups, passRiskGroups: cfg.message.pass_risk_groups };
+  const rules = rulesFrom(cfg);
   const t = cfg.timeout_ms;
   const chainId = cfg.screening_chain_id;
   const asset = cfg.asset_to_mainnet[option.asset.toLowerCase()] as MainnetAddress | undefined;
@@ -105,14 +114,16 @@ export async function screen(
     maxTimeoutSeconds: option.maxTimeoutSeconds,
   });
   const checks = await Promise.all([
-    deep ? deepScanAddress(payToMainnet, addressRule, t) : quickScanAddress(payToMainnet, addressRule, t),
-    scanToken(asset, chainId, t),
-    scanMessage(buyer, typed, String(chainId), website, messageRule, t),
+    deep ? deepScanAddress(payToMainnet, rules.address, t) : quickScanAddress(payToMainnet, rules.address, t),
+    scanToken(asset, String(chainId), rules.token, t),
+    scanMessage(buyer, typed, String(chainId), website, rules.message, t),
   ]);
 
+  // Worst verdict wins: RISKY > UNAVAILABLE > CAUTION > SAFE.
   const risky = checks.filter((c) => c.verdict === "RISKY");
   const down = checks.filter((c) => c.verdict === "UNAVAILABLE");
-  const verdict = risky.length ? "RISKY" : down.length ? "UNAVAILABLE" : "SAFE";
-  const reasons = [...risky, ...down].flatMap((c) => c.reasons.map((r) => `${c.check}: ${r}`));
+  const caution = checks.filter((c) => c.verdict === "CAUTION");
+  const verdict = risky.length ? "RISKY" : down.length ? "UNAVAILABLE" : caution.length ? "CAUTION" : "SAFE";
+  const reasons = [...risky, ...down, ...caution].flatMap((c) => c.reasons.map((r) => `${c.check}: ${r}`));
   return { verdict, reasons, checks, screened_as: { chain_id: chainId, payTo: payToMainnet, asset } };
 }

@@ -12,7 +12,7 @@ import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { deepScanAddress, quickScanAddress, scanMessage, scanToken, type CheckResult } from "../lib/intercepta";
 import { loadPolicy, type MainnetAddress } from "../lib/policy";
-import { loadScreeningConfig, transferAuthorizationTypedData } from "../lib/screening";
+import { loadScreeningConfig, rulesFrom, transferAuthorizationTypedData } from "../lib/screening";
 
 const LOG = path.join(process.cwd(), "data", "live-checks.jsonl");
 const USDC_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -29,8 +29,7 @@ async function intercepta() {
   // Same inputs the gate uses: the mainnet stand-ins from config/policy.json, Base (8453).
   const cfg = loadScreeningConfig();
   const policy = loadPolicy();
-  const addressRule = { blockAtScore: cfg.address_block_if_toxic_score_at_least, blockOnAnyTrait: cfg.address_block_if_any_trait };
-  const messageRule = { blockRiskGroups: cfg.message.block_risk_groups, passRiskGroups: cfg.message.pass_risk_groups };
+  const rules = rulesFrom(cfg);
   const t = 15_000;
   const chainId = cfg.screening_chain_id;
   const buyer = privateKeyToAccount(process.env.BUYER_PRIVATE_KEY as `0x${string}`).address;
@@ -41,10 +40,10 @@ async function intercepta() {
   const checks: CheckResult[] = [];
   for (const target of targets) {
     const addr = target.mainnet as MainnetAddress;
-    checks.push(await quickScanAddress(addr, addressRule, t));
-    checks.push(await deepScanAddress(addr, addressRule, t));
+    checks.push(await quickScanAddress(addr, rules.address, t));
+    checks.push(await deepScanAddress(addr, rules.address, t));
   }
-  checks.push(await scanToken(asset, chainId, t));
+  checks.push(await scanToken(asset, String(chainId), rules.token, t));
   for (const target of targets) {
     const typed = transferAuthorizationTypedData({
       from: buyer,
@@ -54,7 +53,7 @@ async function intercepta() {
       verifyingContract: asset,
       extra: { name: "USD Coin", version: "2" },
     });
-    checks.push(await scanMessage(buyer, typed, String(chainId), process.env.PUBLIC_BASE_URL ?? "http://localhost:3000", messageRule, t));
+    checks.push(await scanMessage(buyer, typed, String(chainId), process.env.PUBLIC_BASE_URL ?? "http://localhost:3000", rules.message, t));
   }
   for (const c of checks) {
     // Logged as-is. "answered" = HTTP 2xx; the gate's verdict is shown separately and not changed here.

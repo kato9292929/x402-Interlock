@@ -1,16 +1,42 @@
 {
   "_comment": [
-    "How Intercepta results are judged. All screening is on Base mainnet (chainId 8453) because Intercepta's risk data is mainnet-only; payments settle on Base Sepolia.",
-    "Which mainnet address stands in for each payTo lives in config/policy.json (screening.targets).",
-    "address_* thresholds are provisional: the official scam-and-risk-library page has not been checked yet (unreachable from the build container). Kept strict (BLOCK on any trait).",
-    "message.*_risk_groups must be filled from https://docs.web3antivirus.io/reference/scam-and-risk-library. Until then every riskGroup is unclassified -> UNAVAILABLE -> BLOCK (fail closed)."
+    "How Intercepta results are judged. Source: https://docs.web3antivirus.io/reference/ (contents in spec/04-intercepta-official-spec.md).",
+    "All screening is on Base mainnet (chainId 8453): Intercepta's risk data is mainnet-only; payments settle on Base Sepolia. Which mainnet address stands in for each payTo is in config/policy.json (screening.targets).",
+    "address: traits tied directly to asset theft or sanctions BLOCK; suspicious-but-not-conclusive traits need the owner (ASK_HUMAN); no traits passes. The 15 trait names of ToxicScoreShortResponseV2 are all classified; an unknown name is UNAVAILABLE (BLOCK).",
+    "address: toxicScore is recorded and shown, but never decides on its own: the vendor publishes no threshold for it.",
+    "token: follow the vendor's recommended action (block -> BLOCK, warn -> ASK_HUMAN, info -> pass).",
+    "message: riskGroup values are not listed in the docs; they will be classified from verify-live results. Until then every riskGroup is unclassified -> UNAVAILABLE -> BLOCK (fail closed)."
   ],
   "screening_chain_id": 8453,
   "asset_to_mainnet": {
     "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
   },
-  "address_block_if_toxic_score_at_least": 1,
-  "address_block_if_any_trait": true,
+  "address": {
+    "block_traits": [
+      "known_scammer",
+      "sanction_address",
+      "sanction_address_communication",
+      "blacklist",
+      "fake_phishing_transfer",
+      "fake_phishing_contract_communication",
+      "initiator_scam_transactions",
+      "rug_pull",
+      "attack_money_target"
+    ],
+    "ask_human_traits": [
+      "mixer_transfers",
+      "non_kyc_transfers",
+      "suspicious_deployer",
+      "suspicious_dex_pair_deployer",
+      "zero_address_risk",
+      "rug_pull_trader"
+    ]
+  },
+  "token": {
+    "block_actions": ["block"],
+    "ask_human_actions": ["warn"],
+    "pass_actions": ["info"]
+  },
   "message": {
     "block_risk_groups": [],
     "pass_risk_groups": []

@@ -7,6 +7,7 @@ export type Decision = "PAY" | "CAP" | "ASK_HUMAN" | "BLOCK";
 export type ReasonCode =
   | "SCREENING_RISKY"
   | "SCREENING_UNAVAILABLE"
+  | "SCREENING_CAUTION"
   | "PAYTO_NOT_ALLOWLISTED"
   | "PER_PAYMENT_LIMIT_CAPPED"
   | "PER_PAYMENT_LIMIT_NO_CAP"
@@ -52,7 +53,7 @@ export interface Candidate {
 }
 
 export interface Screening {
-  verdict: "SAFE" | "RISKY" | "UNAVAILABLE";
+  verdict: "SAFE" | "CAUTION" | "RISKY" | "UNAVAILABLE";
   reasons: string[];
 }
 
@@ -103,7 +104,7 @@ const lower = (s: string) => s.toLowerCase();
  *  2. payTo not allowlisted       -> BLOCK
  *  3. over per-payment limit      -> CAP to a cheaper offered option, else BLOCK
  *  4. over run limit              -> BLOCK
- *  5. over ask_human_above / repurchase in window -> ASK_HUMAN
+ *  5. screening caution / over ask_human_above / repurchase in window -> ASK_HUMAN
  *  6. otherwise                   -> PAY
  *
  * x402 "exact" payments cannot be partially paid, so CAP means choosing a
@@ -123,7 +124,7 @@ export function evaluatePolicy(
   const block = (reasons: ReasonCode[]): GateResult => ({ decision: "BLOCK", reasons });
 
   if (screening.verdict === "RISKY") return block(["SCREENING_RISKY"]);
-  if (screening.verdict !== "SAFE") return block(["SCREENING_UNAVAILABLE"]);
+  if (screening.verdict !== "SAFE" && screening.verdict !== "CAUTION") return block(["SCREENING_UNAVAILABLE"]);
 
   const wanted = candidate.options[0];
   if (!wanted) return block(["PER_PAYMENT_LIMIT_NO_CAP"]);
@@ -145,12 +146,13 @@ export function evaluatePolicy(
   const amount = BigInt(selected.amount);
   if (ctx.spentAtomic + amount > perRun) return block([...reasons, "RUN_LIMIT_EXCEEDED"]);
 
+  if (screening.verdict === "CAUTION") reasons.push("SCREENING_CAUTION");
   if (amount > askAbove) reasons.push("ABOVE_HUMAN_THRESHOLD");
   const windowMs = policy.repurchase_window_minutes * 60_000;
   if (ctx.lastPurchaseAt && ctx.now.getTime() - ctx.lastPurchaseAt.getTime() < windowMs) {
     reasons.push("REPURCHASE_IN_WINDOW");
   }
-  if (reasons.includes("ABOVE_HUMAN_THRESHOLD") || reasons.includes("REPURCHASE_IN_WINDOW")) {
+  if (reasons.some((r) => r === "SCREENING_CAUTION" || r === "ABOVE_HUMAN_THRESHOLD" || r === "REPURCHASE_IN_WINDOW")) {
     return { decision: "ASK_HUMAN", reasons, selected };
   }
   if (capped) return { decision: "CAP", reasons, selected };

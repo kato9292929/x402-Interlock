@@ -1,15 +1,17 @@
 // Intercepta (Web3 Antivirus API) client. Official reference: https://docs.web3antivirus.io/reference/
 //   Scan Message       https://docs.web3antivirus.io/reference/  (analysis/signature; spec given by the owner, see spec/03)
-//   Quick Scan Address https://docs.web3antivirus.io/reference/quick-scan-address   -- NOT yet checked against the page
-//   Deep Scan Address  https://docs.web3antivirus.io/reference/scan-address         -- NOT yet checked against the page
-//   Scan Token         https://docs.web3antivirus.io/reference/scan-token           -- NOT yet checked against the page
+//   Quick Scan Address https://docs.web3antivirus.io/reference/quick-scan-address   (ToxicScoreShortResponseV2)
+//   Deep Scan Address  https://docs.web3antivirus.io/reference/scan-address         (ToxicScoreShortResponseV2)
+//   Scan Token         https://docs.web3antivirus.io/reference/scan-token           (TokenRiskAnalysisV2Response)
+// Reference contents as pasted by the owner: spec/04-intercepta-official-spec.md
 // All screening is against Base mainnet (chainId 8453): the risk data is mainnet-only.
 // Every call goes to the real API. There is no mock or fallback value: if the API
 // does not answer with a recognisable body, the check is UNAVAILABLE and the gate BLOCKs.
 
 const BASE = () => process.env.INTERCEPTA_BASE_URL ?? "https://api.web3antivirus.io";
 
-export type CheckVerdict = "SAFE" | "RISKY" | "UNAVAILABLE";
+/** CAUTION = suspicious but not conclusive: the owner must approve (ASK_HUMAN). */
+export type CheckVerdict = "SAFE" | "CAUTION" | "RISKY" | "UNAVAILABLE";
 
 export interface CheckResult {
   check: "quick_scan_address" | "deep_scan_address" | "scan_token" | "scan_message";
@@ -45,45 +47,66 @@ async function call(
   return { status: res.status, json };
 }
 
+// ToxicScoreShortResponseV2 (Quick Scan and Deep Scan share it)
 interface Trait {
   name?: string;
-  risk?: string;
+  risk?: number;
+  txsCount?: number;
   description?: string;
 }
 
 export interface AddressRule {
-  blockAtScore: number;
-  blockOnAnyTrait: boolean;
+  /** trait names that BLOCK (asset theft / sanctions). */
+  blockTraits: string[];
+  /** trait names that need the owner (suspicious, not conclusive). */
+  askHumanTraits: string[];
 }
 
-/** Interpret a Quick/Deep Scan Address body: `{ toxicScore, traits: [{ name, risk, description }] }`. */
+/**
+ * Interpret a ToxicScoreShortResponseV2 body. The verdict comes from `traits[].name` only.
+ * `toxicScore` has no published threshold, so it is reported but never decides on its own.
+ * A trait name outside both lists is UNAVAILABLE (fail closed).
+ */
 export function interpretAddress(json: unknown, rule: AddressRule): { verdict: CheckVerdict; reasons: string[] } {
   const o = (json ?? {}) as Record<string, unknown>;
-  const score = (o.toxicScore ?? o.toxic_score) as unknown;
-  const traits = (Array.isArray(o.traits) ? o.traits : []) as Trait[];
-  if (typeof score !== "number") return { verdict: "UNAVAILABLE", reasons: ["unrecognised address scan response"] };
-  const reasons = traits.map((t) => `${t.name ?? "trait"}${t.risk ? ` (${t.risk})` : ""}${t.description ? `: ${t.description}` : ""}`);
-  const risky = score >= rule.blockAtScore || (rule.blockOnAnyTrait && traits.length > 0);
-  return { verdict: risky ? "RISKY" : "SAFE", reasons: [`toxicScore=${score}`, ...reasons] };
+  if (!Array.isArray(o.traits)) return { verdict: "UNAVAILABLE", reasons: ["no traits[] in address scan response"] };
+  const traits = o.traits as Trait[];
+  const score = typeof o.toxicScore === "number" ? `toxicScore=${o.toxicScore} (informational)` : "toxicScore=n/a";
+  const describe = (t: Trait) =>
+    `${t.name ?? "trait"}${t.risk !== undefined ? ` (risk ${t.risk})` : ""}${t.description ? `: ${t.description}` : ""}`;
+  const names = traits.map((t) => t.name ?? "");
+  const unknown = names.filter((n) => !rule.blockTraits.includes(n) && !rule.askHumanTraits.includes(n));
+  const reasons = [score, ...traits.map(describe)];
+  if (names.some((n) => rule.blockTraits.includes(n))) return { verdict: "RISKY", reasons };
+  if (unknown.length) return { verdict: "UNAVAILABLE", reasons: [...reasons, `unclassified trait: ${unknown.join(", ")}`] };
+  if (names.length) return { verdict: "CAUTION", reasons };
+  return { verdict: "SAFE", reasons };
 }
 
-/** Interpret Scan Token / Scan Message bodies: `{ action, riskLevel, detectors: [{ code, description }] }`. */
-export function interpretFindings(json: unknown): { verdict: CheckVerdict; reasons: string[] } {
+export interface TokenRule {
+  blockActions: string[];
+  askHumanActions: string[];
+  passActions: string[];
+}
+
+/**
+ * Interpret a TokenRiskAnalysisV2Response body. The verdict follows the vendor's own
+ * recommended `action` (block | warn | info); the other fields are reported as evidence.
+ */
+export function interpretToken(json: unknown, rule: TokenRule): { verdict: CheckVerdict; reasons: string[] } {
   const o = (json ?? {}) as Record<string, unknown>;
-  const findings = (Array.isArray(o.detectors) ? o.detectors : Array.isArray(o.risks) ? o.risks : undefined) as
-    | { code?: string; name?: string; description?: string; severity?: string }[]
-    | undefined;
-  const action = typeof o.action === "string" ? o.action.toLowerCase() : undefined;
-  const level = typeof o.riskLevel === "string" ? o.riskLevel.toLowerCase() : undefined;
-  if (!findings && !action && !level) return { verdict: "UNAVAILABLE", reasons: ["unrecognised scan response"] };
+  const action = typeof o.action === "string" ? o.action : undefined;
+  if (!action) return { verdict: "UNAVAILABLE", reasons: ["no action in token scan response"] };
+  const detectors = (Array.isArray(o.detectors) ? o.detectors : []) as { code?: string; description?: string }[];
   const reasons = [
-    ...(action ? [`action=${action}`] : []),
-    ...(level ? [`riskLevel=${level}`] : []),
-    ...(findings ?? []).map((f) => `${f.code ?? f.name ?? "finding"}${f.description ? `: ${f.description}` : ""}`),
+    `action=${action}`,
+    ...(["riskLevel", "category", "trust", "riskScore"] as const).filter((k) => o[k] !== undefined).map((k) => `${k}=${o[k]}`),
+    ...detectors.map((d) => `${d.code ?? "detector"}${d.description ? `: ${d.description}` : ""}`),
   ];
-  const risky =
-    action === "block" || action === "warn" || level === "high" || level === "critical" || (!action && !level && !!findings?.length);
-  return { verdict: risky ? "RISKY" : "SAFE", reasons };
+  if (rule.blockActions.includes(action)) return { verdict: "RISKY", reasons };
+  if (rule.askHumanActions.includes(action)) return { verdict: "CAUTION", reasons };
+  if (rule.passActions.includes(action)) return { verdict: "SAFE", reasons };
+  return { verdict: "UNAVAILABLE", reasons: [...reasons, "action not classified in config/screening.json"] };
 }
 
 async function run(
@@ -121,12 +144,12 @@ export function deepScanAddress(address: string, rule: AddressRule, timeoutMs: n
   );
 }
 
-export function scanToken(token: string, chainId: number, timeoutMs: number) {
+export function scanToken(token: string, chainId: string, rule: TokenRule, timeoutMs: number) {
   return run(
     "scan_token",
     `${chainId}:${token}`,
     () => call("GET", `/api/public/v2/extension/token-intelligence/token/${token}/risks?chainId=${chainId}`, timeoutMs),
-    interpretFindings,
+    (j) => interpretToken(j, rule),
   );
 }
 
