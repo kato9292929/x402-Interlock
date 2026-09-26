@@ -78,8 +78,9 @@ test("scan message: verdict from riskGroup; unclassified or missing -> UNAVAILAB
   assert.equal(interpretSignature({}, rule).verdict, "UNAVAILABLE");
 });
 
-test("scan message: with the shipped config every riskGroup is still unclassified (BLOCK)", () => {
-  assert.equal(interpretSignature({ riskGroup: "anything" }, rules.message).verdict, "UNAVAILABLE");
+test("scan message: shipped config passes riskGroup Low (seen live); anything else is unclassified (BLOCK)", () => {
+  assert.equal(interpretSignature({ messageType: "TransferWithAuthorization", riskGroup: "Low" }, rules.message).verdict, "SAFE");
+  assert.equal(interpretSignature({ riskGroup: "High" }, rules.message).verdict, "UNAVAILABLE");
 });
 
 // ---- token cache and rate limits, against a local HTTP stand-in (test only) ----

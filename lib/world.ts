@@ -13,7 +13,8 @@ import type { IDKitResult } from "@worldcoin/idkit-core";
 
 const DATA = () => process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 
-export const WORLD_ENV = () => (process.env.WORLD_ENVIRONMENT ?? "sandbox") as "production" | "staging" | "sandbox";
+// Default production: sandbox verification was refused live with `environment_not_allowed` (2026-09-26).
+export const WORLD_ENV = () => (process.env.WORLD_ENVIRONMENT ?? "production") as "production" | "staging" | "sandbox";
 const VERIFY_BASE = () => process.env.WORLD_VERIFY_BASE_URL ?? "https://developer.world.org";
 const TTL = () => Number(process.env.WORLD_APPROVAL_TTL_SECONDS ?? 180);
 
@@ -88,7 +89,8 @@ export function createApprovalRequest(decision_id: string, summary: ApprovalRequ
     action,
     signal: paymentSignal({ decision_id, ...summary }),
     environment: WORLD_ENV(),
-    require_user_presence: process.env.WORLD_REQUIRE_USER_PRESENCE !== "0",
+    // Off by default: with it on, World App's face check failed live (2026-09-26). Opt in with =1.
+    require_user_presence: process.env.WORLD_REQUIRE_USER_PRESENCE === "1",
     rp_context: { rp_id, nonce: sig.nonce, created_at: sig.createdAt, expires_at: sig.expiresAt, signature: sig.sig },
     summary,
   };

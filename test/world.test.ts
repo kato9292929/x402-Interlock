@@ -139,3 +139,14 @@ test("api key: 401 from World in sandbox says the API key is the likely cause", 
     assert.match(r.reason, /^world_verify_unauthorized \(HTTP 401\).*needs a team API key.*Set WORLD_API_KEY and WORLD_API_KEY_HEADER/);
   });
 });
+
+test("defaults: production environment, no user-presence check", async () => {
+  const { WORLD_ENV } = await import("../lib/world");
+  const prev = process.env.WORLD_ENVIRONMENT;
+  delete process.env.WORLD_ENVIRONMENT;
+  try {
+    assert.equal(WORLD_ENV(), "production");
+  } finally {
+    if (prev !== undefined) process.env.WORLD_ENVIRONMENT = prev;
+  }
+});
