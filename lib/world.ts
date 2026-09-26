@@ -17,6 +17,34 @@ export const WORLD_ENV = () => (process.env.WORLD_ENVIRONMENT ?? "sandbox") as "
 const VERIFY_BASE = () => process.env.WORLD_VERIFY_BASE_URL ?? "https://developer.world.org";
 const TTL = () => Number(process.env.WORLD_APPROVAL_TTL_SECONDS ?? 180);
 
+/**
+ * Optional API key for verifying sandbox/staging proofs. The official docs checked on
+ * 2026-09-26 (developer-docs openapi/developer-portal.json, world-id/sandbox/sandbox-access.mdx,
+ * idkit-core 4.3.0, human-in-the-loop 0.2.1) define no auth for POST /api/v4/verify, so the
+ * header name is not known. It is configured (WORLD_API_KEY_HEADER), never guessed, and the
+ * key is never sent for production.
+ */
+export class WorldConfigError extends Error {}
+
+export function verifyAuthHeaders(environment: string): Record<string, string> {
+  if (environment === "production") return {};
+  const key = process.env.WORLD_API_KEY;
+  const header = process.env.WORLD_API_KEY_HEADER;
+  if (!key && !header) return {};
+  if (!key || !header) {
+    throw new WorldConfigError(
+      `World ID ${environment} verification is half-configured: set both WORLD_API_KEY and WORLD_API_KEY_HEADER, or neither`,
+    );
+  }
+  return { [header]: key };
+}
+
+const unauthorizedHint = (environment: string) =>
+  environment === "production"
+    ? "World rejected the verify call as unauthenticated"
+    : `World rejected the ${environment} verify call as unauthenticated: ${environment} verification likely needs a team API key. ` +
+      (process.env.WORLD_API_KEY ? "The configured WORLD_API_KEY / WORLD_API_KEY_HEADER was refused." : "Set WORLD_API_KEY and WORLD_API_KEY_HEADER.");
+
 export function worldAction(decisionId: string): string {
   // One stable action per agent so the owner's nullifier is stable and can be pinned.
   // Setting WORLD_ACTION_PER_DECISION=1 scopes the action to the decision instead
@@ -51,6 +79,8 @@ export function createApprovalRequest(decision_id: string, summary: ApprovalRequ
   const signingKeyHex = process.env.WORLD_SIGNING_KEY;
   if (!app_id || !rp_id || !signingKeyHex) throw new Error("NEXT_PUBLIC_WORLD_APP_ID / WORLD_RP_ID / WORLD_SIGNING_KEY not set");
   const action = worldAction(decision_id);
+  // Fail before the owner is asked to scan anything if verification could never succeed.
+  verifyAuthHeaders(WORLD_ENV());
   const sig = signRequest({ signingKeyHex, action, ttl: TTL() });
   const req: ApprovalRequest = {
     decision_id,
@@ -112,11 +142,17 @@ export async function verifyApproval(req: ApprovalRequest, result: IDKitResult, 
     return { ok: false, reason: "signal_mismatch" };
   }
 
+  let auth: Record<string, string>;
+  try {
+    auth = verifyAuthHeaders(req.environment);
+  } catch (e) {
+    return { ok: false, reason: `world_config_error: ${(e as Error).message}` };
+  }
   let world: { status: number; body: unknown };
   try {
     const res = await fetch(`${VERIFY_BASE()}/api/v4/verify/${req.rp_context.rp_id}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...auth },
       body: JSON.stringify({ ...result, environment: req.environment }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -125,6 +161,10 @@ export async function verifyApproval(req: ApprovalRequest, result: IDKitResult, 
     return { ok: false, reason: `world_verify_unreachable: ${(e as Error).message}` };
   }
   const body = (world.body ?? {}) as { success?: boolean; action?: string; environment?: string; code?: string };
+  // Only World's own JSON 401/403 points at credentials; a non-JSON 403 (e.g. a proxy) does not.
+  if ((world.status === 401 || world.status === 403) && world.body !== null) {
+    return { ok: false, reason: `world_verify_unauthorized (HTTP ${world.status}): ${unauthorizedHint(req.environment)}`, world_response: world.body };
+  }
   if (world.status !== 200 || body.success !== true) {
     return { ok: false, reason: `world_verify_failed: ${body.code ?? world.status}`, world_response: world.body };
   }

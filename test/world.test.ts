@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import type { IDKitResult } from "@worldcoin/idkit-core";
-import { paymentSignal, verifyApproval, type ApprovalRequest } from "../lib/world";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { paymentSignal, verifyApproval, verifyAuthHeaders, type ApprovalRequest } from "../lib/world";
 
 // Local checks that run before the World Developer API is called.
 // Every case here must be refused without a network call.
@@ -62,4 +67,75 @@ test("valid-looking proof still needs World's verify API (unreachable here -> re
   const r = await verifyApproval(req, as(good));
   assert.equal(r.ok, false);
   assert.match(r.reason, /^world_verify_unreachable/);
+});
+
+// ---- sandbox/staging API key (header name is configured, never guessed) ----
+
+async function withWorld(status: number, fn: (seen: Record<string, string | string[] | undefined>[]) => Promise<void>) {
+  const seen: Record<string, string | string[] | undefined>[] = [];
+  const srv = createServer((q, s) => {
+    seen.push(q.headers);
+    q.resume();
+    q.on("end", () => {
+      s.writeHead(status, { "content-type": "application/json" });
+      s.end(JSON.stringify(status === 200 ? { success: true, action: req.action, environment: "sandbox" } : { success: false, code: "unauthorized" }));
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const prev = process.env.WORLD_VERIFY_BASE_URL;
+  process.env.WORLD_VERIFY_BASE_URL = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "world-"));
+  try {
+    await fn(seen);
+  } finally {
+    process.env.WORLD_VERIFY_BASE_URL = prev;
+    delete process.env.WORLD_API_KEY;
+    delete process.env.WORLD_API_KEY_HEADER;
+    srv.close();
+  }
+}
+
+test("api key: none configured -> no auth header", () => {
+  assert.deepEqual(verifyAuthHeaders("sandbox"), {});
+});
+
+test("api key: sent for sandbox/staging only, never for production", () => {
+  process.env.WORLD_API_KEY = "k";
+  process.env.WORLD_API_KEY_HEADER = "x-test-auth";
+  try {
+    assert.deepEqual(verifyAuthHeaders("sandbox"), { "x-test-auth": "k" });
+    assert.deepEqual(verifyAuthHeaders("staging"), { "x-test-auth": "k" });
+    assert.deepEqual(verifyAuthHeaders("production"), {});
+  } finally {
+    delete process.env.WORLD_API_KEY;
+    delete process.env.WORLD_API_KEY_HEADER;
+  }
+});
+
+test("api key: half-configured is an error with a clear message", () => {
+  process.env.WORLD_API_KEY = "k";
+  try {
+    assert.throws(() => verifyAuthHeaders("sandbox"), /set both WORLD_API_KEY and WORLD_API_KEY_HEADER/);
+    assert.deepEqual(verifyAuthHeaders("production"), {});
+  } finally {
+    delete process.env.WORLD_API_KEY;
+  }
+});
+
+test("api key: configured key reaches the verify call", async () => {
+  await withWorld(200, async (seen) => {
+    process.env.WORLD_API_KEY = "secret-value";
+    process.env.WORLD_API_KEY_HEADER = "x-test-auth";
+    const r = await verifyApproval(req, as(good));
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(seen[0]["x-test-auth"], "secret-value");
+  });
+});
+
+test("api key: 401 from World in sandbox says the API key is the likely cause", async () => {
+  await withWorld(401, async () => {
+    const r = await verifyApproval(req, as(good));
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /^world_verify_unauthorized \(HTTP 401\).*needs a team API key.*Set WORLD_API_KEY and WORLD_API_KEY_HEADER/);
+  });
 });
