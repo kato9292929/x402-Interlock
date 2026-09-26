@@ -26,27 +26,34 @@ payment by reporting "approved".
 
 ### Intercepta (required link)
 
+Official reference: https://docs.web3antivirus.io/reference/
+
 | What | Where |
 |---|---|
-| HTTP call to the Intercepta API (`X-API-KEY`) | [`lib/intercepta.ts#L27`](lib/intercepta.ts#L27) |
-| Quick Scan Address (payTo) | [`lib/intercepta.ts#L105`](lib/intercepta.ts#L105) |
-| Deep Scan Address (payTo, used above `deep_scan_above`) | [`lib/intercepta.ts#L114`](lib/intercepta.ts#L114) |
-| Scan Token (is this the real USDC?) | [`lib/intercepta.ts#L123`](lib/intercepta.ts#L123) |
-| Scan Message (the TransferWithAuthorization about to be signed) | [`lib/intercepta.ts#L134`](lib/intercepta.ts#L134) |
-| Mainnet mapping + aggregation | [`lib/screening.ts#L67`](lib/screening.ts#L67) |
-| Called from the gate, before any signing | [`lib/gate.ts#L100`](lib/gate.ts#L100) |
+| HTTP call to the Intercepta API (`X-API-KEY`) | [`lib/intercepta.ts#L32`](lib/intercepta.ts#L32) |
+| Quick Scan Address (payTo) · [ref](https://docs.web3antivirus.io/reference/quick-scan-address) | [`lib/intercepta.ts#L110`](lib/intercepta.ts#L110) |
+| Deep Scan Address (payTo, above `deep_scan_above`) · [ref](https://docs.web3antivirus.io/reference/scan-address) | [`lib/intercepta.ts#L119`](lib/intercepta.ts#L119) |
+| Scan Token (is this the real USDC?) · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L128`](lib/intercepta.ts#L128) |
+| Scan Message (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L161`](lib/intercepta.ts#L161), verdict from `riskGroup` [L141](lib/intercepta.ts#L141) |
+| Testnet payTo → mainnet screening address | [`lib/policy.ts#L93`](lib/policy.ts#L93) |
+| Screening on Base mainnet + aggregation | [`lib/screening.ts#L81`](lib/screening.ts#L81) |
+| Called from the gate, before any signing | [`lib/gate.ts#L110`](lib/gate.ts#L110) |
 
 **Fail-closed policy.** If Intercepta does not answer, answers with a non-2xx status, or answers
 with a body the gate cannot interpret, that check is `UNAVAILABLE` and the payment is **BLOCKed**
-(`SCREENING_UNAVAILABLE`). There are no mock or default "safe" values anywhere in the runtime path.
-If a payment cannot be screened, it is not made.
+(`SCREENING_UNAVAILABLE`). A Scan Message `riskGroup` that is not classified in
+[`config/screening.json`](config/screening.json) is also `UNAVAILABLE`. There are no mock or
+default "safe" values anywhere in the runtime path. If a payment cannot be screened, it is not made.
 
-**Mainnet screening for a testnet payment.** Intercepta's risk data covers mainnet only. Payments
-settle on Base Sepolia, so [`config/screening.json`](config/screening.json) maps each network and
-asset to its mainnet counterpart: Base Sepolia maps to Base (8453), and Base Sepolia USDC maps to
-Base USDC. The payTo EOA is screened as the same address on mainnet. An asset with no mapping
-cannot be screened and is blocked. The raw Intercepta response for every check is saved in the
-ledger as evidence. The API key is not.
+**Screening runs on Base mainnet (8453) while payment settles on Base Sepolia, on purpose: Intercepta's risk data is mainnet-only, so a testnet address would tell it nothing.**
+Each testnet payTo is mapped to the mainnet address screened in its place
+(`screening.targets` in [`config/policy.json`](config/policy.json)), and Base Sepolia USDC to Base
+USDC ([`config/screening.json`](config/screening.json)). The Scan Message payload is rebuilt with
+mainnet values (chainId 8453, Base USDC contract, mainnet recipient). A payTo or asset with no
+mainnet mapping cannot be screened and is blocked. In code, `TestnetAddress` and `MainnetAddress`
+are separate types, so one cannot be passed where the other is expected. The raw Intercepta
+response for every check is saved in the ledger, together with the mainnet addresses screened.
+The API key is not saved.
 
 ### World ID (verification)
 
@@ -54,7 +61,7 @@ ledger as evidence. The API key is not.
 |---|---|
 | RP-signed request (`signRequest`, TTL) | [`lib/world.ts#L54`](lib/world.ts#L54) |
 | **Server-side verification** | [`lib/world.ts#L98`](lib/world.ts#L98): nonce / action / environment ([L103](lib/world.ts#L103)), signal = this payment ([L112](lib/world.ts#L112)), World Developer API `POST /api/v4/verify/{rp_id}` ([L117](lib/world.ts#L117)), owner nullifier ([L143](lib/world.ts#L143)) |
-| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L271`](lib/gate.ts#L271), [L293](lib/gate.ts#L293), [L253](lib/gate.ts#L253), [L299](lib/gate.ts#L299) |
+| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L282`](lib/gate.ts#L282), [L304](lib/gate.ts#L304), [L264](lib/gate.ts#L264), [L310](lib/gate.ts#L310) |
 | IDKit widget (relays the proof only) | [`app/approve/[id]/approval-client.tsx#L101`](app/approve/%5Bid%5D/approval-client.tsx#L101) |
 
 The browser only passes the IDKit result along. A payment is signed only after the server has
@@ -90,18 +97,30 @@ We request **`proof_of_human` (Orb) only**, with `require_user_presence` enabled
   After that, a proof from anyone else is refused (`not_agent_owner`). Uniqueness for each
   payment comes from the RP nonce and the payment-bound signal, not from a new action per payment.
 
-## Fixed rules
+## Decisions
 
-[`config/policy.json`](config/policy.json), evaluated by [`lib/policy.ts`](lib/policy.ts) in this order:
+[`config/policy.json`](config/policy.json), evaluated by [`lib/policy.ts`](lib/policy.ts). Rules are checked top to bottom; the first BLOCK wins.
 
-1. Intercepta risky → `BLOCK` (`SCREENING_RISKY`); unavailable → `BLOCK` (`SCREENING_UNAVAILABLE`)
-2. payTo not in `allowlist` → `BLOCK`
-3. above `max_amount_per_payment` → `CAP`. An x402 `exact` payment cannot be partial, so CAP means paying a cheaper option the seller itself offered in `accepts` (e.g. the $0.40 sample instead of the $2.00 dataset). If there is none, the payment is `BLOCK`ed.
-4. run total would exceed `max_amount_per_run` → `BLOCK`
-5. above `ask_human_above`, or the same resource bought within `repurchase_window_minutes` → `ASK_HUMAN`
-6. otherwise → `PAY`
+| # | Condition | Decision | Reason code |
+|---|---|---|---|
+| 1 | Intercepta flags payTo, token or message | `BLOCK` | `SCREENING_RISKY` |
+| 1 | Intercepta cannot screen (no answer, non-2xx, unknown body, unclassified `riskGroup`, no mainnet mapping) | `BLOCK` | `SCREENING_UNAVAILABLE` |
+| 2 | payTo not in `allowlist` | `BLOCK` | `PAYTO_NOT_ALLOWLISTED` |
+| 3 | amount > `max_amount_per_payment`, and the seller offers a cheaper option within the cap | `CAP` | `PER_PAYMENT_LIMIT_CAPPED` |
+| 3 | amount > `max_amount_per_payment`, and no cheaper option | `BLOCK` | `PER_PAYMENT_LIMIT_NO_CAP` |
+| 4 | run total would exceed `max_amount_per_run` | `BLOCK` | `RUN_LIMIT_EXCEEDED` |
+| 5 | amount > `ask_human_above` | `ASK_HUMAN` | `ABOVE_HUMAN_THRESHOLD` |
+| 5 | same resource bought within `repurchase_window_minutes` | `ASK_HUMAN` | `REPURCHASE_IN_WINDOW` |
+| 6 | none of the above | `PAY` | `WITHIN_POLICY` |
 
-Every decision returns an array of reason codes.
+**CAP.** An x402 `exact` payment cannot be partly paid, so CAP never reduces an amount. It switches
+to a cheaper option that the seller itself listed in `accepts` (in the demo, the $0.40 sample
+instead of the $2.00 dataset). If there is no such option, the payment is BLOCKed. A capped
+payment that is still above `ask_human_above` becomes `ASK_HUMAN`, with both reason codes.
+
+**Allowlist = testnet payTo.** `allowlist` is checked against the Base Sepolia address that is
+actually paid, not against the mainnet screening address. By default it reads
+`env:SELLER_PAY_TO`, so it needs no editing.
 
 ## Ledger
 
@@ -126,8 +145,10 @@ npm run dev                    # http://localhost:3000  (timeline)
 | Variable | Notes |
 |---|---|
 | `BUYER_PRIVATE_KEY` | Base Sepolia test wallet holding test USDC. Server only. |
-| `SELLER_PAY_TO` | Demo seller address. **Also add it to `allowlist` in `config/policy.json`.** |
-| `RISKY_PAY_TO` | The risky demo address pinned in Intercepta's ETHGlobal Discord channel |
+| `SELLER_PAY_TO` | Demo seller's **testnet** wallet (the allowlist reads it) |
+| `RISKY_PAY_TO` | Testnet payTo of the "risky" demo seller (any wallet you control) |
+| `SELLER_MAINNET_ADDRESS` | A clean **mainnet** address that Intercepta screens for the seller |
+| `RISKY_MAINNET_ADDRESS` | The risky **mainnet** address pinned in Intercepta's ETHGlobal Discord channel |
 | `INTERCEPTA_API_KEY` | From intercepta.io/ethglobal |
 | `NEXT_PUBLIC_WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_SIGNING_KEY` | From developer.world.org (sandbox) |
 | `AGENT_TOKEN` | Shared secret between the agent script and the gate API |
@@ -137,14 +158,7 @@ In the World developer portal, allow repeated verifications for the action
 
 ### Demo scenarios
 
-```bash
-npm run agent -- quote     # 1. safe, $0.01           → PAY, paid, ledger entry
-npm run agent -- risky     # 2. flagged payTo          → BLOCK, Intercepta reason shown
-npm run agent -- report    # 3. $0.80 > ask_human_above → ASK_HUMAN; open the printed URL,
-                           #    approve (paid) or reject (not paid) with World ID
-npm run agent -- dataset   #    $2.00 > per-payment cap → CAP to the $0.40 option
-npm run agent -- report --cancel-after 30   # agent gives up → CANCELLED
-```
+See [`docs/DEMO.md`](docs/DEMO.md) for the commands and the expected result of each.
 
 ### Live checks
 
@@ -167,17 +181,25 @@ stand-ins exist only in the test file. The application code always calls the rea
 
 ## Status: what has been verified
 
-To be honest about where things stand, since the project must not claim unverified features as done:
+The project must not claim unverified features as done, so this table records exactly what has and has not been tested.
 
-| Part | Status |
+**Verified**
+
+| Part | How |
 |---|---|
-| Policy engine, ledger hash chain, redaction | Verified by unit tests |
-| Gate flow: PAY / CAP / BLOCK / ASK_HUMAN, all four human exits, replay, wrong owner, fail-closed | Verified by the integration test with local stand-ins |
-| Signing an x402 `exact` payload with the server-held key | Verified locally (real EIP-712 signature via `@x402/evm`) |
-| UI (timeline, approval page) | Rendered and checked against a test ledger |
-| Live Intercepta API | **Not yet verified.** Endpoint paths and response shapes are taken from secondary sources, because the vendor docs were unreachable from the build environment |
-| Live World ID sandbox approval | **Not yet verified** |
-| Live settlement on Base Sepolia via the x402.org facilitator | **Not yet verified** |
+| Policy engine, ledger hash chain, redaction | Unit tests |
+| Gate flow: PAY / CAP / BLOCK / ASK_HUMAN, all four human exits, replay, wrong owner, fail-closed, mainnet-only screening inputs | Integration test with local stand-ins |
+| Signing an x402 `exact` payload with the server-held key | Locally (real EIP-712 signature via `@x402/evm`) |
+| UI (timeline, approval page) | Rendered against a test ledger |
+
+**Not yet verified**
+
+| Part | Notes |
+|---|---|
+| Intercepta Scan Message, live | Request body follows the official spec. The `riskGroup` values that pass or block are not classified yet (risk library page not read), so every message is currently BLOCKed |
+| Intercepta Quick Scan / Deep Scan / Scan Token, live | Paths and response shapes not yet checked against the official reference pages |
+| World ID sandbox approve / reject, live | Needs World App on the owner's phone |
+| Base Sepolia settlement via the x402.org facilitator | Not yet run |
 
 ## Starter kits and libraries
 
