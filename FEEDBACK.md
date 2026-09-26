@@ -8,9 +8,9 @@
 - Time to first successful call: _TODO (owner: record the time of the first 2xx response)_
 - Confusing:
   - (build) There is no single typed schema for response bodies. Quick Scan returns `toxicScore` and `traits`, while token and message scans use `action`, `riskLevel` and `detectors`. We had to write a separate parser for each.
-  - (build) It is unclear whether Scan Message supports EIP-3009 `TransferWithAuthorization`, which is the message x402 `exact` asks buyers to sign.
+  - (build) Scan Message takes the EIP-712 payload as-is, so x402's EIP-3009 `TransferWithAuthorization` fits. But the meaning of each `riskGroup` value has to be looked up in the risk library before a gate can act on it.
 - Missing:
-  - (build) Testnet chain IDs, or an official mapping from testnet to mainnet, for hackathon payments on Base Sepolia.
+  - (build) Testnet chain IDs: the Scan Message `chainId` enum has Base (8453) but not Base Sepolia (84532), so a testnet payment has to be rebuilt with mainnet values before it can be screened.
   - _TODO_
 
 ## World (World ID for Agents)
