@@ -10,6 +10,7 @@
   - _TODO (owner: after `npm run verify-live`, note anything about the response shapes that was unclear from the reference pages)_
   - (build) Scan Message takes the EIP-712 payload as-is, so x402's EIP-3009 `TransferWithAuthorization` fits. But the meaning of each `riskGroup` value has to be looked up in the risk library before a gate can act on it.
 - Missing:
+  - The free hackathon key's rate limit is easy to hit during a demo. A payment gate makes about three calls per payment (address, token, message), so a few payments in a row got `HTTP 429 "API Key rate limit is reached"` on Scan Token. That made a safe payment fail closed. The limit and its window are not stated with the key or in the error, and there is no `Retry-After` hint. We now cache token scans for 10 minutes to stay under it.
   - (build) Testnet chain IDs: the Scan Message `chainId` enum has Base (8453) but not Base Sepolia (84532), so a testnet payment has to be rebuilt with mainnet values before it can be screened.
   - _TODO_
 

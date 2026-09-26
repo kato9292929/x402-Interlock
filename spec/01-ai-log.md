@@ -26,3 +26,5 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~16:30 | `README.md`, `docs/DEMO.md` | Claude Code | README line links recomputed |
 | 09-26 ~18:40 | `spec/05-world-id-sandbox-api-key.md`; research in idkit-core 4.3.0, idkit-server 1.1.1, human-in-the-loop 0.2.1, worldcoin/developer-docs @ 10536b5 | Claude Code | header name for the sandbox API key: **not found** in any of them |
 | 09-26 ~18:50 | `lib/world.ts` (optional API key, sandbox/staging only; 401/403 diagnosis), `scripts/verify-live.ts` (World verify probe), tests, `.env.example`, `README.md`, `FEEDBACK.md` | Claude Code | 56 tests pass; live World **not** verified |
+| 09-26 ~19:30 | owner's live run: `risky` BLOCKed with SCREENING_RISKY from the real API; `quote` BLOCKed because Scan Token returned HTTP 429 | owner (Mac) | live |
+| 09-26 ~19:40 | `lib/intercepta.ts` (token-scan cache, explicit 429 reason), `lib/screening.ts`, `config/screening.json`, timeline "(cached)", tests, `README.md`, `FEEDBACK.md` | Claude Code | 63 tests pass |

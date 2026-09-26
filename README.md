@@ -30,12 +30,12 @@ Official reference: https://docs.web3antivirus.io/reference/
 
 | What | Where |
 |---|---|
-| HTTP call to the Intercepta API (`X-API-KEY` header) | [`lib/intercepta.ts#L34`](lib/intercepta.ts#L34) |
-| Quick Scan Address `GET …/account/{address}/quick-scan` · [ref](https://docs.web3antivirus.io/reference/quick-scan-address) | [`lib/intercepta.ts#L133`](lib/intercepta.ts#L133) |
-| Deep Scan Address `GET …/account/{address}/toxic-score`, used above `deep_scan_above` · [ref](https://docs.web3antivirus.io/reference/scan-address) | [`lib/intercepta.ts#L142`](lib/intercepta.ts#L142) |
-| Reading `ToxicScoreShortResponseV2` (both address scans) | [`lib/intercepta.ts#L70`](lib/intercepta.ts#L70) |
-| Scan Token `GET …/token-intelligence/token/{address}/risks?chainId=8453` · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L151`](lib/intercepta.ts#L151), reading `TokenRiskAnalysisV2Response` [L96](lib/intercepta.ts#L96) |
-| Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L184`](lib/intercepta.ts#L184), verdict from `riskGroup` [L164](lib/intercepta.ts#L164) |
+| HTTP call to the Intercepta API (`X-API-KEY` header) | [`lib/intercepta.ts#L36`](lib/intercepta.ts#L36) |
+| Quick Scan Address `GET …/account/{address}/quick-scan` · [ref](https://docs.web3antivirus.io/reference/quick-scan-address) | [`lib/intercepta.ts#L148`](lib/intercepta.ts#L148) |
+| Deep Scan Address `GET …/account/{address}/toxic-score`, used above `deep_scan_above` · [ref](https://docs.web3antivirus.io/reference/scan-address) | [`lib/intercepta.ts#L157`](lib/intercepta.ts#L157) |
+| Reading `ToxicScoreShortResponseV2` (both address scans) | [`lib/intercepta.ts#L72`](lib/intercepta.ts#L72) |
+| Scan Token `GET …/token-intelligence/token/{address}/risks?chainId=8453` · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L195`](lib/intercepta.ts#L195), reading `TokenRiskAnalysisV2Response` [L98](lib/intercepta.ts#L98) |
+| Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L230`](lib/intercepta.ts#L230), verdict from `riskGroup` [L210](lib/intercepta.ts#L210) |
 | Testnet payTo → mainnet screening address | [`lib/policy.ts#L94`](lib/policy.ts#L94) |
 | Screening on Base mainnet + aggregation | [`lib/screening.ts#L91`](lib/screening.ts#L91) |
 | Called from the gate, before any signing | [`lib/gate.ts#L110`](lib/gate.ts#L110) |
@@ -61,6 +61,12 @@ Why these lines:
   because it can also fit a legitimate counterparty. All 15 documented trait names are
   classified. A name outside the list is `UNAVAILABLE` and BLOCKs.
 - **Token.** Scan Token returns the vendor's own recommended `action`, so the gate follows it as-is.
+- **Caching.** Answered token scans are cached in-process per (chainId, token) for
+  `token_cache_minutes` (default 10; 0 turns it off) ([`lib/intercepta.ts#L175`](lib/intercepta.ts#L175)).
+  Address scans and Scan Message are never cached.
+- **Rate limits.** An HTTP 429 makes that one check `UNAVAILABLE`, with reason
+  `rate limit reached (HTTP 429): …`. Other checks keep their own verdicts, and the payment
+  still BLOCKs (fail closed).
 - **`toxicScore` is never used on its own.** The vendor publishes no threshold for it, so any
   cut-off we picked would be arbitrary. It is recorded in the ledger and shown on the timeline,
   but the verdict comes from `traits`.
