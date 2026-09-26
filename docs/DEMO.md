@@ -8,6 +8,9 @@ Run on the owner's Mac (the World ID steps need World App on a phone).
 cp .env.example .env.local   # fill in every value
 npm install
 npm run verify-live          # all four Intercepta calls should answer 2xx; check data/live-checks.jsonl
+# Scan Message's riskGroup is not classified yet, so every payment BLOCKs until the riskGroup
+# seen for the clean seller in verify-live is added to message.pass_risk_groups in
+# config/screening.json. Do this before recording scenario 1.
 npm run dev                  # keep running; open http://localhost:3000 (timeline)
 ```
 

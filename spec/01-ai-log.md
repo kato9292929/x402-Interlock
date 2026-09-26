@@ -21,3 +21,6 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~15:30 | `lib/intercepta.ts` (Scan Message to official spec), `lib/policy.ts`, `lib/screening.ts`, `lib/gate.ts`, `config/*.json`, `.env.example` | Claude Code | unit + integration tests (44); live API **not** verified |
 | 09-26 ~15:40 | `scripts/verify-live.ts` | Claude Code | runs; all external hosts blocked in build container |
 | 09-26 ~15:50 | `README.md`, `docs/DEMO.md`, `FEEDBACK.md` | Claude Code | n/a |
+| 09-26 ~16:10 | `spec/04-intercepta-official-spec.md` | Claude Code (copied owner's paste of the official reference) | n/a |
+| 09-26 ~16:20 | `lib/intercepta.ts`, `lib/screening.ts`, `lib/policy.ts`, `config/screening.json`, `scripts/verify-live.ts`, tests, UI badge colours | Claude Code | 51 tests pass; live API **not** verified |
+| 09-26 ~16:30 | `README.md`, `docs/DEMO.md` | Claude Code | README line links recomputed |

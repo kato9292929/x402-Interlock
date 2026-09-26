@@ -30,14 +30,44 @@ Official reference: https://docs.web3antivirus.io/reference/
 
 | What | Where |
 |---|---|
-| HTTP call to the Intercepta API (`X-API-KEY`) | [`lib/intercepta.ts#L32`](lib/intercepta.ts#L32) |
-| Quick Scan Address (payTo) · [ref](https://docs.web3antivirus.io/reference/quick-scan-address) | [`lib/intercepta.ts#L110`](lib/intercepta.ts#L110) |
-| Deep Scan Address (payTo, above `deep_scan_above`) · [ref](https://docs.web3antivirus.io/reference/scan-address) | [`lib/intercepta.ts#L119`](lib/intercepta.ts#L119) |
-| Scan Token (is this the real USDC?) · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L128`](lib/intercepta.ts#L128) |
-| Scan Message (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L161`](lib/intercepta.ts#L161), verdict from `riskGroup` [L141](lib/intercepta.ts#L141) |
-| Testnet payTo → mainnet screening address | [`lib/policy.ts#L93`](lib/policy.ts#L93) |
-| Screening on Base mainnet + aggregation | [`lib/screening.ts#L81`](lib/screening.ts#L81) |
+| HTTP call to the Intercepta API (`X-API-KEY` header) | [`lib/intercepta.ts#L34`](lib/intercepta.ts#L34) |
+| Quick Scan Address `GET …/account/{address}/quick-scan` · [ref](https://docs.web3antivirus.io/reference/quick-scan-address) | [`lib/intercepta.ts#L133`](lib/intercepta.ts#L133) |
+| Deep Scan Address `GET …/account/{address}/toxic-score`, used above `deep_scan_above` · [ref](https://docs.web3antivirus.io/reference/scan-address) | [`lib/intercepta.ts#L142`](lib/intercepta.ts#L142) |
+| Reading `ToxicScoreShortResponseV2` (both address scans) | [`lib/intercepta.ts#L70`](lib/intercepta.ts#L70) |
+| Scan Token `GET …/token-intelligence/token/{address}/risks?chainId=8453` · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L151`](lib/intercepta.ts#L151), reading `TokenRiskAnalysisV2Response` [L96](lib/intercepta.ts#L96) |
+| Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L184`](lib/intercepta.ts#L184), verdict from `riskGroup` [L164](lib/intercepta.ts#L164) |
+| Testnet payTo → mainnet screening address | [`lib/policy.ts#L94`](lib/policy.ts#L94) |
+| Screening on Base mainnet + aggregation | [`lib/screening.ts#L91`](lib/screening.ts#L91) |
 | Called from the gate, before any signing | [`lib/gate.ts#L110`](lib/gate.ts#L110) |
+
+### How Intercepta results are judged
+
+Thresholds live in [`config/screening.json`](config/screening.json). Each check gives one of four
+verdicts, and the worst one wins: `RISKY` → BLOCK, `UNAVAILABLE` → BLOCK, `CAUTION` → ASK_HUMAN,
+`SAFE` → pass.
+
+| Check | BLOCK | ASK_HUMAN | Pass |
+|---|---|---|---|
+| Quick / Deep Scan Address (`traits[].name`) | `known_scammer`, `sanction_address`, `sanction_address_communication`, `blacklist`, `fake_phishing_transfer`, `fake_phishing_contract_communication`, `initiator_scam_transactions`, `rug_pull`, `attack_money_target` | `mixer_transfers`, `non_kyc_transfers`, `suspicious_deployer`, `suspicious_dex_pair_deployer`, `zero_address_risk`, `rug_pull_trader` | no traits |
+| Scan Token (`action`) | `block` | `warn` | `info` |
+| Scan Message (`riskGroup`) | not classified yet: every value BLOCKs until real responses are classified | | |
+
+Why these lines:
+
+- **Address traits.** A trait tied directly to asset theft or sanctions (a known scammer,
+  sanctioned or blacklisted address, phishing, rug pull, attack target) BLOCKs: paying such an
+  address is the loss the gate exists to prevent. A suspicious but not conclusive trait (mixer
+  or non-KYC flows, suspicious deployer, zero-address risk, rug-pull trader) goes to the owner,
+  because it can also fit a legitimate counterparty. All 15 documented trait names are
+  classified. A name outside the list is `UNAVAILABLE` and BLOCKs.
+- **Token.** Scan Token returns the vendor's own recommended `action`, so the gate follows it as-is.
+- **`toxicScore` is never used on its own.** The vendor publishes no threshold for it, so any
+  cut-off we picked would be arbitrary. It is recorded in the ledger and shown on the timeline,
+  but the verdict comes from `traits`.
+- **Scan Message.** The docs do not list the values `riskGroup` can take. They will be
+  classified from real `npm run verify-live` responses, using the risk library's three tiers
+  (Critical risks, Moderate risks, Suspicious activity) to decide where BLOCK and ASK_HUMAN fall.
+  Until then, an unclassified value BLOCKs (fail closed).
 
 **Fail-closed policy.** If Intercepta does not answer, answers with a non-2xx status, or answers
 with a body the gate cannot interpret, that check is `UNAVAILABLE` and the payment is **BLOCKed**
@@ -103,12 +133,13 @@ We request **`proof_of_human` (Orb) only**, with `require_user_presence` enabled
 
 | # | Condition | Decision | Reason code |
 |---|---|---|---|
-| 1 | Intercepta flags payTo, token or message | `BLOCK` | `SCREENING_RISKY` |
-| 1 | Intercepta cannot screen (no answer, non-2xx, unknown body, unclassified `riskGroup`, no mainnet mapping) | `BLOCK` | `SCREENING_UNAVAILABLE` |
+| 1 | Intercepta flags payTo, token or message (BLOCK column above) | `BLOCK` | `SCREENING_RISKY` |
+| 1 | Intercepta cannot screen (no answer, non-2xx, unknown body, unclassified value, no mainnet mapping) | `BLOCK` | `SCREENING_UNAVAILABLE` |
 | 2 | payTo not in `allowlist` | `BLOCK` | `PAYTO_NOT_ALLOWLISTED` |
 | 3 | amount > `max_amount_per_payment`, and the seller offers a cheaper option within the cap | `CAP` | `PER_PAYMENT_LIMIT_CAPPED` |
 | 3 | amount > `max_amount_per_payment`, and no cheaper option | `BLOCK` | `PER_PAYMENT_LIMIT_NO_CAP` |
 | 4 | run total would exceed `max_amount_per_run` | `BLOCK` | `RUN_LIMIT_EXCEEDED` |
+| 5 | Intercepta finds something suspicious but not conclusive (ASK_HUMAN column above) | `ASK_HUMAN` | `SCREENING_CAUTION` |
 | 5 | amount > `ask_human_above` | `ASK_HUMAN` | `ABOVE_HUMAN_THRESHOLD` |
 | 5 | same resource bought within `repurchase_window_minutes` | `ASK_HUMAN` | `REPURCHASE_IN_WINDOW` |
 | 6 | none of the above | `PAY` | `WITHIN_POLICY` |
@@ -196,8 +227,8 @@ The project must not claim unverified features as done, so this table records ex
 
 | Part | Notes |
 |---|---|
-| Intercepta Scan Message, live | Request body follows the official spec. The `riskGroup` values that pass or block are not classified yet (risk library page not read), so every message is currently BLOCKed |
-| Intercepta Quick Scan / Deep Scan / Scan Token, live | Paths and response shapes not yet checked against the official reference pages |
+| Intercepta Quick Scan / Deep Scan / Scan Token, live | Paths, auth header and response reading now follow the official reference (spec/04), but no real API call has been made yet |
+| Intercepta Scan Message, live | Request body follows the official spec. `riskGroup` values are not classified yet, so every payment is currently BLOCKed by this check until a real response has been classified |
 | World ID sandbox approve / reject, live | Needs World App on the owner's phone |
 | Base Sepolia settlement via the x402.org facilitator | Not yet run |
 
