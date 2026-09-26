@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { interpretAddress, interpretSignature, interpretToken } from "../lib/intercepta";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { clearTokenCache, interpretAddress, interpretSignature, interpretToken, quickScanAddress, scanToken } from "../lib/intercepta";
 import { loadScreeningConfig, rulesFrom } from "../lib/screening";
 
 // Parsing rules only, run against the real config/screening.json.
@@ -78,4 +80,84 @@ test("scan message: verdict from riskGroup; unclassified or missing -> UNAVAILAB
 
 test("scan message: with the shipped config every riskGroup is still unclassified (BLOCK)", () => {
   assert.equal(interpretSignature({ riskGroup: "anything" }, rules.message).verdict, "UNAVAILABLE");
+});
+
+// ---- token cache and rate limits, against a local HTTP stand-in (test only) ----
+
+async function withApi(handler: (url: string) => [number, unknown], fn: (hits: string[]) => Promise<void>) {
+  const hits: string[] = [];
+  const srv = createServer((q, s) => {
+    hits.push(q.url!);
+    const [status, body] = handler(q.url!);
+    s.writeHead(status, { "content-type": "application/json" });
+    s.end(JSON.stringify(body));
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  process.env.INTERCEPTA_BASE_URL = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  process.env.INTERCEPTA_API_KEY = "test-key";
+  clearTokenCache();
+  try {
+    await fn(hits);
+  } finally {
+    srv.close();
+    clearTokenCache();
+  }
+}
+
+const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const info = { riskScore: 0, riskLevel: "neutral", category: "info", trust: "whitelist", action: "info", detectors: [] };
+const TEN_MIN = 10 * 60_000;
+
+test("token cache: second scan within TTL is served from cache, not the API", async () => {
+  await withApi(() => [200, info], async (hits) => {
+    const t0 = 1_000_000;
+    const a = await scanToken(USDC, "8453", rules.token, 1000, TEN_MIN, t0);
+    const b = await scanToken(USDC.toLowerCase(), "8453", rules.token, 1000, TEN_MIN, t0 + 60_000);
+    assert.equal(hits.length, 1);
+    assert.equal(a.cache, undefined);
+    assert.equal(b.verdict, "SAFE");
+    assert.equal(b.cache?.hit, true);
+    assert.equal(b.cache?.fetched_at, new Date(t0).toISOString());
+  });
+});
+
+test("token cache: expires after TTL; keyed by chainId + token", async () => {
+  await withApi(() => [200, info], async (hits) => {
+    const t0 = 1_000_000;
+    await scanToken(USDC, "8453", rules.token, 1000, TEN_MIN, t0);
+    await scanToken(USDC, "8453", rules.token, 1000, TEN_MIN, t0 + TEN_MIN + 1);
+    await scanToken(USDC, "1", rules.token, 1000, TEN_MIN, t0 + TEN_MIN + 2);
+    await scanToken("0x0000000000000000000000000000000000000001", "8453", rules.token, 1000, TEN_MIN, t0 + TEN_MIN + 3);
+    assert.equal(hits.length, 4);
+  });
+});
+
+test("token cache: 0 minutes disables it", async () => {
+  await withApi(() => [200, info], async (hits) => {
+    await scanToken(USDC, "8453", rules.token, 1000, 0);
+    await scanToken(USDC, "8453", rules.token, 1000, 0);
+    assert.equal(hits.length, 2);
+  });
+});
+
+test("429: UNAVAILABLE with an explicit rate-limit reason, and never cached", async () => {
+  let limited = true;
+  await withApi(() => (limited ? [429, { message: "API Key rate limit is reached" }] : [200, info]), async (hits) => {
+    const r = await scanToken(USDC, "8453", rules.token, 1000, TEN_MIN, 1_000_000);
+    assert.equal(r.verdict, "UNAVAILABLE");
+    assert.deepEqual(r.reasons, ["rate limit reached (HTTP 429): API Key rate limit is reached"]);
+    limited = false;
+    const again = await scanToken(USDC, "8453", rules.token, 1000, TEN_MIN, 1_000_001);
+    assert.equal(again.verdict, "SAFE");
+    assert.equal(again.cache, undefined);
+    assert.equal(hits.length, 2);
+  });
+});
+
+test("address scans are never cached", async () => {
+  await withApi(() => [200, { toxicScore: 0, traits: [] }], async (hits) => {
+    await quickScanAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", rules.address, 1000);
+    await quickScanAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", rules.address, 1000);
+    assert.equal(hits.length, 2);
+  });
 });

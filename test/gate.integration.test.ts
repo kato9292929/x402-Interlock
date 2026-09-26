@@ -38,6 +38,7 @@ const prices: Record<string, { payTo: string; amounts: string[] }> = {
 let seller: Server, intercepta: Server, world: Server;
 let sellerUrl = "";
 let interceptaDown = false;
+let tokenRateLimited = false;
 let worldAccepts = true;
 const paidBodies: unknown[] = [];
 
@@ -125,6 +126,11 @@ before(async () => {
       return res.end();
     }
     assert.equal(req.headers["x-api-key"], "test-key");
+    if (req.url!.includes("/token-intelligence/") && tokenRateLimited) {
+      interceptaRequests.push({ url: req.url!, body: "" });
+      res.writeHead(429, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ message: "API Key rate limit is reached" }));
+    }
     const risky = req.url!.toLowerCase().includes(RISKY_MAIN.toLowerCase());
     res.writeHead(200, { "content-type": "application/json" });
     let body = "";
@@ -214,6 +220,33 @@ test("Intercepta only ever sees Base mainnet values, never the testnet payTo", (
 test("token scan asks about Base USDC on chainId 8453", () => {
   const tok = interceptaRequests.find((r) => r.url.includes("/token-intelligence/"))!;
   assert.match(tok.url, /\/token\/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\/risks\?chainId=8453$/);
+});
+
+test("token scan is cached across payments: one API call for Base USDC so far", () => {
+  const tokenCalls = interceptaRequests.filter((r) => r.url.includes("/token-intelligence/"));
+  const paymentsScreened = interceptaRequests.filter((r) => r.url.includes("analysis/signature")).length;
+  assert.ok(paymentsScreened >= 2);
+  assert.equal(tokenCalls.length, 1);
+});
+
+test("token 429 (uncached): BLOCK with a rate-limit reason; the other checks keep their own verdicts", async () => {
+  const { clearTokenCache } = await import("../lib/intercepta");
+  clearTokenCache();
+  tokenRateLimited = true;
+  try {
+    const v = await ev("quote", "run-429");
+    assert.deepEqual(v.reasons, ["SCREENING_UNAVAILABLE"]);
+    const { Ledger } = await import("../lib/ledger");
+    const s = new Ledger().byDecision(v.decision_id).find((e) => e.event_type === "screening_result")!;
+    const checks = s.data.checks as { check: string; verdict: string; reasons: string[] }[];
+    const tok = checks.find((c) => c.check === "scan_token")!;
+    assert.equal(tok.verdict, "UNAVAILABLE");
+    assert.match(tok.reasons[0], /^rate limit reached \(HTTP 429\)/);
+    assert.equal(checks.find((c) => c.check !== "scan_token" && c.check !== "scan_message")!.verdict, "SAFE");
+    assert.ok((s.data.reasons as string[]).some((r) => r.startsWith("scan_token: rate limit reached")));
+  } finally {
+    tokenRateLimited = false;
+  }
 });
 
 test("suspicious (not conclusive) trait -> ASK_HUMAN with SCREENING_CAUTION", async () => {

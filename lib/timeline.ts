@@ -10,7 +10,7 @@ export interface DecisionCard {
   payTo?: string;
   decision?: string;
   reasons: string[];
-  screening?: { verdict: string; reasons: string[]; checks: { check: string; verdict: string; reasons: string[] }[] };
+  screening?: { verdict: string; reasons: string[]; checks: { check: string; verdict: string; reasons: string[]; cached?: boolean }[] };
   outcome: { label: string; cls: string };
   events: LedgerEvent[];
 }
@@ -53,10 +53,11 @@ export function decisionCards(ledger = new Ledger()): { cards: DecisionCard[]; c
         ? {
             verdict: String(s.data.verdict),
             reasons: s.data.reasons as string[],
-            checks: ((s.data.checks as { check: string; verdict: string; reasons: string[] }[]) ?? []).map((k) => ({
+            checks: ((s.data.checks as { check: string; verdict: string; reasons: string[]; cache?: unknown }[]) ?? []).map((k) => ({
               check: k.check,
               verdict: k.verdict,
               reasons: k.reasons,
+              cached: !!k.cache,
             })),
           }
         : undefined,

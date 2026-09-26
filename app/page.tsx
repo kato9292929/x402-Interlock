@@ -42,6 +42,7 @@ export default async function Timeline() {
                     {c.screening.checks.map((k) => (
                       <li key={k.check}>
                         <code>{k.check}</code>: <span className={k.verdict}>{k.verdict}</span>
+                        {k.cached && <span className="muted"> (cached)</span>}
                         {k.reasons.length > 0 && <span className="muted"> — {k.reasons.join("; ")}</span>}
                       </li>
                     ))}
