@@ -36,10 +36,10 @@ main { max-width: 960px; margin: 0 auto; padding: 16px; }
 .card { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .badge { font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
-.PAY, .PAID { color: var(--pay); }
+.PAY, .PAID, .SAFE { color: var(--pay); }
 .CAP { color: var(--cap); }
-.ASK_HUMAN, .AWAITING_HUMAN { color: var(--ask); }
-.BLOCK, .BLOCKED, .HUMAN_REJECTED, .HUMAN_EXPIRED, .HUMAN_CANCELLED, .PAYMENT_FAILED { color: var(--block); }
+.ASK_HUMAN, .AWAITING_HUMAN, .CAUTION { color: var(--ask); }
+.BLOCK, .BLOCKED, .RISKY, .UNAVAILABLE, .HUMAN_REJECTED, .HUMAN_EXPIRED, .HUMAN_CANCELLED, .PAYMENT_FAILED { color: var(--block); }
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0; }
 ol.events { list-style: none; padding: 0; margin: 8px 0 0; border-left: 2px solid var(--line); }

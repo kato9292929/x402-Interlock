@@ -14,6 +14,7 @@ import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymen
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import type { IDKitResult } from "@worldcoin/idkit-core";
 import { loadApprovalRequest } from "../lib/world";
+import { loadScreeningConfig } from "../lib/screening";
 
 const SELLER = "0x1111111111111111111111111111111111111111";
 const RISKY = "0x2222222222222222222222222222222222222222";
@@ -21,6 +22,8 @@ const UNMAPPED = "0x3333333333333333333333333333333333333333";
 // Base mainnet stand-ins that Intercepta screens in place of the testnet payTo.
 const SELLER_MAIN = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RISKY_MAIN = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const CAUTION = "0x4444444444444444444444444444444444444444";
+const CAUTION_MAIN = "0xcccccccccccccccccccccccccccccccccccccccc";
 const interceptaRequests: { url: string; body: string }[] = [];
 const USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const prices: Record<string, { payTo: string; amounts: string[] }> = {
@@ -29,6 +32,7 @@ const prices: Record<string, { payTo: string; amounts: string[] }> = {
   dataset: { payTo: SELLER, amounts: ["2000000", "400000"] },
   risky: { payTo: RISKY, amounts: ["10000"] },
   unmapped: { payTo: UNMAPPED, amounts: ["10000"] },
+  caution: { payTo: CAUTION, amounts: ["10000"] },
 };
 
 let seller: Server, intercepta: Server, world: Server;
@@ -48,7 +52,7 @@ before(async () => {
     process.env.POLICY_PATH,
     JSON.stringify({
       token_decimals: 6,
-      allowlist: ["env:SELLER_PAY_TO", UNMAPPED],
+      allowlist: ["env:SELLER_PAY_TO", UNMAPPED, CAUTION],
       max_amount_per_payment: "1.00",
       max_amount_per_run: "3.00",
       ask_human_above: "0.50",
@@ -57,6 +61,7 @@ before(async () => {
         targets: [
           { name: "seller", payTo: "env:SELLER_PAY_TO", mainnet: "env:SELLER_MAINNET_ADDRESS" },
           { name: "risky", payTo: "env:RISKY_PAY_TO", mainnet: "env:RISKY_MAINNET_ADDRESS" },
+          { name: "caution", payTo: CAUTION, mainnet: CAUTION_MAIN },
         ],
       },
     }),
@@ -72,8 +77,9 @@ before(async () => {
     JSON.stringify({
       screening_chain_id: 8453,
       asset_to_mainnet: { [USDC.toLowerCase()]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-      address_block_if_toxic_score_at_least: 1,
-      address_block_if_any_trait: true,
+      // address / token rules are the shipped ones; only riskGroup labels are test-local.
+      address: loadScreeningConfig(path.join(process.cwd(), "config", "screening.json")).address,
+      token: loadScreeningConfig(path.join(process.cwd(), "config", "screening.json")).token,
       message: { block_risk_groups: ["test-block"], pass_risk_groups: ["test-pass"] },
       deep_scan_above: "0.50",
       timeout_ms: 5000,
@@ -126,9 +132,17 @@ before(async () => {
     req.on("end", () => {
       interceptaRequests.push({ url: req.url!, body });
       if (req.url!.includes("/account/")) {
-        return res.end(JSON.stringify(risky ? { toxicScore: 95, traits: [{ name: "known_scammer", risk: "high" }] } : { toxicScore: 0, traits: [] }));
+        const caution = req.url!.toLowerCase().includes(CAUTION_MAIN.toLowerCase());
+        const traits = risky
+          ? [{ name: "known_scammer", risk: 95, txsCount: 4, description: "reported scam" }]
+          : caution
+            ? [{ name: "mixer_transfers", risk: 40, txsCount: 1, description: "received from a mixer" }]
+            : [];
+        return res.end(JSON.stringify({ toxicScore: risky ? 95 : caution ? 40 : 0, traits }));
       }
-      if (req.url!.includes("/token-intelligence/")) return res.end(JSON.stringify({ action: "info", detectors: [] }));
+      if (req.url!.includes("/token-intelligence/")) {
+        return res.end(JSON.stringify({ riskScore: 0, riskLevel: "neutral", category: "info", trust: "whitelist", action: "info", detectors: [] }));
+      }
       const m = JSON.parse(body);
       const msgRisky = m.message.message.to.toLowerCase() === RISKY_MAIN.toLowerCase();
       res.end(JSON.stringify({ riskGroup: msgRisky ? "test-block" : "test-pass" }));
@@ -195,6 +209,17 @@ test("Intercepta only ever sees Base mainnet values, never the testnet payTo", (
   assert.equal(typeof body.message, "object");
   assert.equal(body.message.primaryType, "TransferWithAuthorization");
   assert.equal(body.message.domain.chainId, 8453);
+});
+
+test("token scan asks about Base USDC on chainId 8453", () => {
+  const tok = interceptaRequests.find((r) => r.url.includes("/token-intelligence/"))!;
+  assert.match(tok.url, /\/token\/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913\/risks\?chainId=8453$/);
+});
+
+test("suspicious (not conclusive) trait -> ASK_HUMAN with SCREENING_CAUTION", async () => {
+  const v = await ev("caution", "run-caution");
+  assert.equal(v.decision, "ASK_HUMAN");
+  assert.deepEqual(v.reasons, ["SCREENING_CAUTION"]);
 });
 
 test("payTo with no mainnet screening target -> BLOCK (cannot screen)", async () => {

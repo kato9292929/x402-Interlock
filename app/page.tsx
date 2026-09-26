@@ -37,11 +37,11 @@ export default async function Timeline() {
               <>
                 <dt>Intercepta</dt>
                 <dd>
-                  <span className={`badge ${c.screening.verdict === "SAFE" ? "PAY" : "BLOCK"}`}>{c.screening.verdict}</span>
+                  <span className={`badge ${c.screening.verdict}`}>{c.screening.verdict}</span>
                   <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
                     {c.screening.checks.map((k) => (
                       <li key={k.check}>
-                        <code>{k.check}</code>: <span className={k.verdict === "SAFE" ? "PAY" : "BLOCK"}>{k.verdict}</span>
+                        <code>{k.check}</code>: <span className={k.verdict}>{k.verdict}</span>
                         {k.reasons.length > 0 && <span className="muted"> — {k.reasons.join("; ")}</span>}
                       </li>
                     ))}

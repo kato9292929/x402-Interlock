@@ -85,3 +85,10 @@ test("capped amount still above human threshold -> ASK_HUMAN with both reasons",
   assert.deepEqual(r.reasons, ["PER_PAYMENT_LIMIT_CAPPED", "ABOVE_HUMAN_THRESHOLD"]);
   assert.equal(r.selected?.amount, "900000");
 });
+
+test("screening CAUTION -> ASK_HUMAN, but BLOCK rules still win", () => {
+  const caution: Screening = { verdict: "CAUTION", reasons: ["mixer_transfers"] };
+  assert.deepEqual(run([opt("10000")], caution), { decision: "ASK_HUMAN", reasons: ["SCREENING_CAUTION"], selected: opt("10000") });
+  assert.deepEqual(run([opt("10000", STRANGER)], caution).reasons, ["PAYTO_NOT_ALLOWLISTED"]);
+  assert.equal(run([opt("100000")], caution, { spentAtomic: 2_950_000n, now }).decision, "BLOCK");
+});
