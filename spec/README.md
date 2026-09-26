@@ -10,3 +10,4 @@ Specs and prompts given to AI coding tools while building **x402 Interlock**.
 | `01-ai-log.md` | Log of what the AI generated, per commit/file, and what was verified |
 | `02-research-prompt.md` | Prompt given to a research sub-agent for the partner APIs |
 | `03-live-api-alignment.md` | Second brief (09-26 ~15:15 JST): align with official Intercepta docs, split mainnet screening config, live verification |
+| `04-intercepta-official-spec.md` | Official Intercepta reference (pasted by the owner) and the screening thresholds derived from it |
