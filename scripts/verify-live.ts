@@ -3,7 +3,7 @@
 // from a record, not memory. Nothing here is mocked.
 //
 //   npm run verify-live            # all checks
-//   npm run verify-live -- intercepta | facilitator | wallet
+//   npm run verify-live -- intercepta | world | facilitator | wallet
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -13,6 +13,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { deepScanAddress, quickScanAddress, scanMessage, scanToken, type CheckResult } from "../lib/intercepta";
 import { loadPolicy, type MainnetAddress } from "../lib/policy";
 import { loadScreeningConfig, rulesFrom, transferAuthorizationTypedData } from "../lib/screening";
+import { verifyAuthHeaders, WORLD_ENV } from "../lib/world";
 
 const LOG = path.join(process.cwd(), "data", "live-checks.jsonl");
 const USDC_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -67,6 +68,51 @@ async function intercepta() {
   }
 }
 
+/**
+ * Probe POST /api/v4/verify/{rp_id} with a deliberately invalid sandbox proof. It can never
+ * verify; the point is World's status and error body: 400 = request accepted and the proof
+ * rejected, 401/403 = the call itself needs credentials (the body may say which header).
+ */
+async function world() {
+  const env = WORLD_ENV();
+  const rp = process.env.WORLD_RP_ID;
+  if (!rp) return record("world.verify_probe", false, { error: "WORLD_RP_ID is not set" });
+  const bogus = { protocol_version: "4.0", nonce: "0x01", action: "interlock-probe", environment: env, responses: [] };
+  const attempts: [string, Record<string, string>][] = [["without api key", {}]];
+  try {
+    const auth = verifyAuthHeaders(env);
+    if (Object.keys(auth).length) attempts.push([`with ${process.env.WORLD_API_KEY_HEADER}`, auth]);
+  } catch (e) {
+    return record("world.verify_probe", false, { error: (e as Error).message });
+  }
+  for (const [label, headers] of attempts) {
+    try {
+      const res = await fetch(`https://developer.world.org/api/v4/verify/${rp}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(bogus),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const text = await res.text();
+      let fromWorld = true;
+      try {
+        JSON.parse(text);
+      } catch {
+        fromWorld = false; // e.g. a proxy's plain-text 403: says nothing about World's auth
+      }
+      const denied = res.status === 401 || res.status === 403;
+      record(`world.verify_probe ${env} ${label}`, fromWorld && !denied, {
+        http_status: res.status,
+        auth_required: !fromWorld ? "inconclusive (response is not World's JSON)" : denied,
+        www_authenticate: res.headers.get("www-authenticate"),
+        body: text,
+      });
+    } catch (e) {
+      record(`world.verify_probe ${env} ${label}`, false, { error: (e as Error).message });
+    }
+  }
+}
+
 async function facilitator() {
   const url = "https://x402.org/facilitator/supported";
   try {
@@ -92,7 +138,7 @@ async function wallet() {
 }
 
 const which = process.argv[2];
-const all = { intercepta, facilitator, wallet } as const;
+const all = { intercepta, world, facilitator, wallet } as const;
 (async () => {
   for (const [name, fn] of Object.entries(all)) if (!which || which === name) await fn();
 })();
