@@ -32,3 +32,4 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 ~19:50 | `README.md` status, `FEEDBACK.md` first-call time | Claude Code | n/a |
 | 09-26 evening | owner's live runs: World ID approve → paid, reject → HUMAN_REJECTED, expire → not paid (production env, presence off); Scan Message riskGroup=Low | owner (Mac) | live |
 | 09-26 ~20:00 | `lib/world.ts` defaults (production, presence off), `config/screening.json` (riskGroup Low passes), `scripts/first-success.ts`, tests, `README.md`, `FEEDBACK.md`, `docs/DEMO.md`, `.env.example` | Claude Code | 64 tests pass |
+| 09-26 ~23:40 | `FEEDBACK.md` first-success times, README status (from the owner's `npm run first-success` output) | Claude Code | from local records |

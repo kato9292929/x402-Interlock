@@ -247,7 +247,9 @@ stand-ins exist only in the test file. The application code always calls the rea
 
 Everything below was run, not just written. Live runs were on the owner's Mac on 2026-09-26
 against the real services (Intercepta API, World ID production verify, Base Sepolia via the
-x402.org facilitator).
+x402.org facilitator). First successes (JST, from the local records):
+Intercepta 19:01:16, first gate screening 19:14:08, first paid payment 19:26:07,
+first verified World ID approval 19:49:44.
 
 | Part | How | Result |
 |---|---|---|
