@@ -105,7 +105,7 @@ const paid: string[] = [];
 const listen = (s: Server) => new Promise<string>((r) => s.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
 before(async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "tasks-"));
+  const dir = process.env.TEST_DATA_DIR ?? mkdtempSync(path.join(tmpdir(), "tasks-"));
   process.env.DATA_DIR = dir;
   process.env.LEDGER_PATH = path.join(dir, "ledger.jsonl");
   const gate = (await generateKeyPairSigner()).address;

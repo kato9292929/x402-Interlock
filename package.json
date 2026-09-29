@@ -10,7 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "agent": "tsx --env-file-if-exists=.env.local scripts/agent.ts",
     "verify-live": "tsx --env-file-if-exists=.env.local scripts/verify-live.ts",
-    "first-success": "tsx scripts/first-success.ts"
+    "first-success": "tsx scripts/first-success.ts",
+    "task": "tsx --env-file-if-exists=.env.local scripts/task.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",
