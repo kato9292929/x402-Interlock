@@ -33,3 +33,6 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-26 evening | owner's live runs: World ID approve → paid, reject → HUMAN_REJECTED, expire → not paid (production env, presence off); Scan Message riskGroup=Low | owner (Mac) | live |
 | 09-26 ~20:00 | `lib/world.ts` defaults (production, presence off), `config/screening.json` (riskGroup Low passes), `scripts/first-success.ts`, tests, `README.md`, `FEEDBACK.md`, `docs/DEMO.md`, `.env.example` | Claude Code | 64 tests pass |
 | 09-26 ~23:40 | `FEEDBACK.md` first-success times, README status (from the owner's `npm run first-success` output) | Claude Code | from local records |
+| 09-29 | `spec/06-tasks-and-action-gate.md` (Colosseum brief); research in `solana-program/subscriptions`, `@solana/subscriptions` 0.5.0, `@x402/svm` 2.27.0, `x402-Autonomous-Agent-` | Claude Code | n/a |
+| 09-29 | `lib/solana/*`, `lib/tasks.ts`, `lib/actions.ts`, `lib/gate.ts`, `lib/signer.ts`, `lib/seller.ts`, task/gate API routes, `config/actions.json`, `app/tasks`, scripts, tests | Claude Code | 86 tests pass offline (22 new), 1 devnet test skipped; devnet **not** run (unreachable from build env) |
+| 09-29 | `README.md` Colosseum section, `docs/DEMO-colosseum.md`, `.env.example` | Claude Code | README line links checked |
