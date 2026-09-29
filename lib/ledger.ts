@@ -7,7 +7,11 @@ export type LedgerEventType =
   | "screening_result"
   | "gate_decision"
   | "human_verification"
-  | "payment_result";
+  | "payment_result"
+  | "task_opened"
+  | "task_closed"
+  | "action_judged"
+  | "allowance_checked";
 
 export interface LedgerEvent {
   event_id: string;

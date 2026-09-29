@@ -1,0 +1,11 @@
+{
+  "_comment": [
+    "Policy per action type. allow = automatic, ask_human = owner approves with World ID, deny = never (no approval can override), notify = allowed and recorded for the owner to review afterwards.",
+    "pay: allow still means every money rule applies (task budget on chain, Intercepta, allowlist, ask_human_above).",
+    "commit = agreements and promises (a price cut, a confirmed date, an in-person meeting). disclose = addresses, phone numbers, credentials. impersonate = speaking as the owner."
+  ],
+  "pay": "allow",
+  "commit": "ask_human",
+  "disclose": "ask_human",
+  "impersonate": "deny"
+}
