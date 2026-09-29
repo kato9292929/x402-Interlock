@@ -39,6 +39,14 @@ const same = (a: PaymentRequirements, b: PaymentRequirements) =>
   eqAddr(a.network, a.payTo, b.payTo) &&
   a.amount === b.amount;
 
+// Tests only: signing a real Solana x402 payment needs an RPC (blockhash, mint), so the
+// offline tests replace just this last step. Never set outside tests.
+type SignFn = (paymentRequired: PaymentRequired, approved: PaymentRequirements) => Promise<PaymentPayload>;
+let signOverride: SignFn | undefined;
+export function setPaymentSignerForTests(f: SignFn | undefined) {
+  signOverride = f;
+}
+
 /**
  * Sign exactly the requirement the gate approved, and nothing else.
  * Spend limits are enforced by the gate policy, so the SDK's default $1 cap is
@@ -48,6 +56,7 @@ export async function signApproved(
   paymentRequired: PaymentRequired,
   approved: PaymentRequirements,
 ): Promise<PaymentPayload> {
+  if (signOverride) return signOverride(paymentRequired, approved);
   // On Solana the payer is the gate's key: the same key the task's Allowance delegates to,
   // funded per payment by a pull under that Allowance (see lib/gate.ts execute()).
   const scheme = isSolanaNetwork(approved.network)
