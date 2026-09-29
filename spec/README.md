@@ -12,3 +12,4 @@ Specs and prompts given to AI coding tools while building **x402 Interlock**.
 | `03-live-api-alignment.md` | Second brief (09-26 ~15:15 JST): align with official Intercepta docs, split mainnet screening config, live verification |
 | `04-intercepta-official-spec.md` | Official Intercepta reference (pasted by the owner) and the screening thresholds derived from it |
 | `05-world-id-sandbox-api-key.md` | Brief on the World ID sandbox verification API key |
+| `06-tasks-and-action-gate.md` | Brief for the Colosseum submission: per-task budgets on Solana Allowances and the action gate |
