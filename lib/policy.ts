@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { toAtomic } from "./amount";
 
-export type Decision = "PAY" | "CAP" | "ASK_HUMAN" | "BLOCK";
+/** PAY / CAP / ASK_HUMAN / BLOCK for payments; ALLOW / DENY for non-payment actions. */
+export type Decision = "PAY" | "CAP" | "ASK_HUMAN" | "BLOCK" | "ALLOW" | "DENY";
 
 export type ReasonCode =
   | "SCREENING_RISKY"
@@ -14,7 +15,22 @@ export type ReasonCode =
   | "RUN_LIMIT_EXCEEDED"
   | "ABOVE_HUMAN_THRESHOLD"
   | "REPURCHASE_IN_WINDOW"
-  | "WITHIN_POLICY";
+  | "WITHIN_POLICY"
+  // task and allowance checks (lib/tasks.ts)
+  | "TASK_MISSING"
+  | "TASK_NOT_ACTIVE"
+  | "TASK_EXPIRED"
+  | "TASK_REQUIRES_SOLANA"
+  | "ALLOWANCE_UNAVAILABLE"
+  | "ALLOWANCE_REVOKED"
+  | "ALLOWANCE_DELEGATE_MISMATCH"
+  | "ALLOWANCE_EXPIRED"
+  | "ALLOWANCE_INSUFFICIENT"
+  // action policy (lib/actions.ts)
+  | "ACTION_ALLOW"
+  | "ACTION_NOTIFY"
+  | "ACTION_ASK_HUMAN"
+  | "ACTION_DENIED";
 
 export interface Policy {
   token_decimals: number;
