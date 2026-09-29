@@ -28,6 +28,7 @@ export default async function Timeline() {
             <span className="muted" style={{ marginLeft: "auto" }}>{new Date(c.started_at).toLocaleString()}</span>
           </div>
           <dl style={{ marginTop: 8 }}>
+            {c.task_id && (<><dt>task</dt><dd><Link href="/tasks">{c.task_id}</Link></dd></>)}
             <dt>resource</dt><dd><code>{c.resource}</code></dd>
             <dt>purpose</dt><dd>{c.purpose}</dd>
             <dt>amount</dt><dd>{c.amount ?? "–"}</dd>

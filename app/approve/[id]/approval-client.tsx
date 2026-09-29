@@ -5,6 +5,7 @@ import { IDKitRequestWidget, proofOfHuman, type IDKitErrorCodes, type IDKitResul
 
 interface Props {
   decisionId: string;
+  isAction?: boolean;
   initialStatus: string;
   expiresAt: number;
   idkit: {
@@ -17,16 +18,25 @@ interface Props {
   };
 }
 
+const ACTION_LABEL: Record<string, string> = {
+  AWAITING_HUMAN: "Waiting for your World ID approval",
+  APPROVED: "Approved: the agent may go ahead",
+  HUMAN_REJECTED: "Rejected: the agent will not do it",
+  HUMAN_EXPIRED: "Expired: the agent will not do it",
+  HUMAN_CANCELLED: "Cancelled: the agent will not do it",
+};
+
 const LABEL: Record<string, string> = {
   AWAITING_HUMAN: "Waiting for your World ID approval",
   PAID: "Approved and paid",
+  APPROVED: "Approved: the agent may go ahead",
   PAYMENT_FAILED: "Approved, but the seller did not settle",
   HUMAN_REJECTED: "Rejected: not paid",
   HUMAN_EXPIRED: "Expired: not paid",
   HUMAN_CANCELLED: "Cancelled: not paid",
 };
 
-export default function ApprovalClient({ decisionId, initialStatus, expiresAt, idkit }: Props) {
+export default function ApprovalClient({ decisionId, isAction, initialStatus, expiresAt, idkit }: Props) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState(initialStatus);
   const [note, setNote] = useState("");
@@ -81,7 +91,7 @@ export default function ApprovalClient({ decisionId, initialStatus, expiresAt, i
   return (
     <section className="card">
       <p className={status} style={{ fontWeight: 700, margin: "0 0 8px" }}>
-        {LABEL[status] ?? status}
+        {(isAction ? ACTION_LABEL : LABEL)[status] ?? status}
         {pending && left >= 0 && <span className="muted"> · {left}s left</span>}
       </p>
       {pending && (
@@ -96,7 +106,7 @@ export default function ApprovalClient({ decisionId, initialStatus, expiresAt, i
       {note && <p className="muted">{note}</p>}
       <p className="muted" style={{ marginBottom: 0 }}>
         Credential requested: <code>proof_of_human</code> (Orb)
-        {idkit.require_user_presence ? " with a fresh user-presence check" : ""}. The proof is bound to this exact payment.
+        {idkit.require_user_presence ? " with a fresh user-presence check" : ""}. The proof is bound to this exact {isAction ? "action" : "payment"}.
       </p>
       <IDKitRequestWidget
         open={open}
@@ -107,7 +117,7 @@ export default function ApprovalClient({ decisionId, initialStatus, expiresAt, i
         environment={idkit.environment}
         allow_legacy_proofs={false}
         require_user_presence={idkit.require_user_presence}
-        action_description="Approve an agent payment"
+        action_description="Approve an agent request"
         preset={proofOfHuman({ signal: idkit.signal })}
         handleVerify={handleVerify}
         onSuccess={() => setOpen(false)}

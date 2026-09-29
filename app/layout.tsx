@@ -13,6 +13,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body>
         <header className="top">
           <Link href="/" className="brand">x402 Interlock</Link>
+          <Link href="/tasks" className="muted">tasks</Link>
           <span className="muted">screen → rules → human → sign</span>
         </header>
         <main>{children}</main>
