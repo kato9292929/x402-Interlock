@@ -9,7 +9,8 @@
   ],
   "screening_chain_id": 8453,
   "asset_to_mainnet": {
-    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "4zmmc9srt5ri5x14gagxhahii3gnpaeerypjgzjdncdu": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
   },
   "address": {
     "block_traits": [
@@ -33,13 +34,21 @@
     ]
   },
   "token": {
-    "block_actions": ["block"],
-    "ask_human_actions": ["warn"],
-    "pass_actions": ["info"]
+    "block_actions": [
+      "block"
+    ],
+    "ask_human_actions": [
+      "warn"
+    ],
+    "pass_actions": [
+      "info"
+    ]
   },
   "message": {
     "block_risk_groups": [],
-    "pass_risk_groups": ["Low"]
+    "pass_risk_groups": [
+      "Low"
+    ]
   },
   "token_cache_minutes": 10,
   "deep_scan_above": "0.50",
