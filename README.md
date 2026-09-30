@@ -337,7 +337,7 @@ the hash chain on every load.
 Requires Node.js 20+.
 
 ```bash
-npm install
+npm ci
 cp .env.example .env.local     # fill in the values below
 npm run dev                    # http://localhost:3000  (timeline)
 ```

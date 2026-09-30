@@ -6,7 +6,7 @@ Run on the owner's Mac (the World ID steps need World App on a phone).
 
 ```bash
 cp .env.example .env.local   # fill in every value
-npm install
+npm ci
 npm run verify-live          # all four Intercepta calls should answer 2xx; check data/live-checks.jsonl
 # verify-live makes ~7 Intercepta calls; skip it right before recording to stay under the rate limit.
 # .env.local: WORLD_ENVIRONMENT=production, WORLD_REQUIRE_USER_PRESENCE=0 (the defaults).
