@@ -40,3 +40,5 @@ Follow-up owner instruction (09-26 ~02:30 JST): "サービス名はx402 Interloc
 | 09-30 | `lib/solana/allowance.ts` (create/revoke/pull/init via the Subscriptions plugin client), `lib/solana/config.ts` (`SOLANA_RPC_WS_URL`), `package.json` (kit plugins as direct deps), `.env.example` (trailing blank line), README links | Claude Code | typecheck + 90 tests pass; devnet **not** re-run (unreachable from build env) |
 | 09-30 | owner's `git pull` blocked by npm-written `package.json`/`package-lock.json`; devnet test still ran the old create | owner (Mac) | live |
 | 09-30 | `package.json` (`allowScripts` decisions, `test:devnet`), `docs/DEMO-colosseum.md` (update steps, env, devnet order), README/DEMO `npm ci` | Claude Code | npm 10.9 and 11.19: `npm ci` then `npm install` leave the tree clean; pull-recovery sequence replayed in a clone |
+| 09-30 | owner's devnet run (`npm run test:devnet`): Allowance 59iqMujwk6abGMUnJDHuWc5NEJbxXmw1njKKzoYKyhrr created (tx 2gaReUQd…CjaN), read at slot 506042095, revoked (tx 3SWUSX1o…8FLCo); pass 1 | owner (Mac) | live |
+| 09-30 | README Colosseum status row for create/read/revoke | Claude Code | from the owner's output |

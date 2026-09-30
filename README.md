@@ -146,7 +146,7 @@ Existing payment events now carry `task_id`. All of these are in the same hash c
 | Part | Status |
 |---|---|
 | Tasks, owner-only issuance, delegate checks, the five checks at evaluate and at signing, action policies, ledger | **Verified offline**: `test/tasks.integration.test.ts` (22 tests) runs against an in-memory chain. Its account bytes are produced by the SDK's own encoder, so the real decoder runs. |
-| Allowance create / read / revoke on devnet | **Not yet run.** `test/solana.devnet.test.ts` runs it when `SOLANA_DEVNET_TEST=1` and keys are set; it is skipped otherwise. |
+| Allowance create / read / revoke on devnet | **Live on devnet (2026-09-30)**, `npm run test:devnet` on the owner's Mac: create tx [2gaReUQd…](https://explorer.solana.com/tx/2gaReUQdRso7ovKH66hNSuUFLzqdzKprRzg3iPzc2d2WmcPJcTi3fPReh3FYK7LMe4ZEFaxS4CMFZmGVFJEyCjaN?cluster=devnet), read back at slot 506042095 (delegator = owner, delegatee = gate key, 10000 atomic), revoke tx [3SWUSX1o…](https://explorer.solana.com/tx/3SWUSX1ouX9pcpJfcwmgoyXfGW5KVR1h3myT54JA4wYATZthZ3bRB1WaVSPrT4JidhKjchUSHnRoBTHypS8wFLCo?cluster=devnet), then the account read as closed. The owner's SubscriptionAuthority was set up with `init-authority` the same day. |
 | Pull (`transferFixed`) and x402 Solana payment through PayAI on devnet | **Not yet run.** devnet and PayAI were unreachable from the build environment. |
 | `@x402/svm` 2.27.0 with `@solana/kit` 7 | Type-checks. `@x402/svm`'s bundled token libraries declare `@solana/kit` ^5 as a peer; runtime compatibility is not yet confirmed. |
 
