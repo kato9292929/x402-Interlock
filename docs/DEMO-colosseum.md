@@ -4,13 +4,50 @@ Solana devnet. Run on the owner's machine: World ID steps need World App on a ph
 
 ## One-time setup
 
-1. Fill the Solana block in `.env.local` (see `.env.example`):
-   `OWNER_TOKEN`, `GATE_SOLANA_PRIVATE_KEY`, `OWNER_SOLANA_PRIVATE_KEY`, `AGENT_SOLANA_ADDRESS`, `SELLER_SOLANA_PAY_TO`.
-2. Fund the accounts on devnet:
-   - owner and gate: devnet SOL, for fees and rent
-   - owner: devnet USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`), for example from Circle's faucet
-3. Enable the owner's SubscriptionAuthority for USDC (once): `npm run task -- init-authority`
-4. `npm run dev`, then open http://localhost:3000/tasks
+### 1. Keys and `.env.local`
+
+Fill the Solana block in `.env.local` (see `.env.example`):
+- `OWNER_TOKEN`, `GATE_SOLANA_PRIVATE_KEY`, `OWNER_SOLANA_PRIVATE_KEY`
+- `AGENT_SOLANA_ADDRESS`, `SELLER_SOLANA_PAY_TO`
+
+The two private keys must be different keypairs, and the agent's address must differ from both.
+
+### 2. What each account needs on devnet
+
+| Account | Needs | Why | How |
+|---|---|---|---|
+| owner | devnet SOL (≈0.05 is plenty) | fees; rent for the SubscriptionAuthority and each task's Allowance | `solana airdrop 1 <OWNER_ADDRESS> --url devnet`, or https://faucet.solana.com |
+| owner | a **USDC token account** for mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | the Allowance delegates from this account | created automatically when USDC is sent to the owner (below) |
+| owner | devnet USDC (≥ the task budget) | the budget itself | https://faucet.circle.com → Solana Devnet → the owner address |
+| gate | devnet SOL | fees for each pull and rent for its own USDC token account (created on the first pull) | `solana airdrop 1 <GATE_ADDRESS> --url devnet` |
+| seller | a USDC token account | to receive payments | send it any devnet USDC once, or `spl-token create-account` for it |
+
+If the owner has SOL but no USDC token account yet (for example, the faucet has not been used),
+create it explicitly:
+
+```bash
+spl-token create-account 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU \
+  --owner <OWNER_ADDRESS> --fee-payer <owner-keypair.json> --url devnet
+```
+
+### 3. Check, then enable the owner's SubscriptionAuthority (once)
+
+```bash
+npm run task -- preflight        # read-only: SOL balances, owner USDC account and balance, authority
+npm run task -- init-authority   # one transaction, signed by the owner
+```
+
+`preflight` lists each problem in plain words (no SOL, no USDC token account, 0 USDC) and the
+address it expects. `init-authority` runs the same checks first and refuses with that list if
+something is missing. It does nothing if the authority already exists.
+
+If a transaction still fails, the CLI prints the error's causes, the decoded program error when
+the Subscriptions program failed, a hint, and the full simulation logs. Paste that output when
+reporting.
+
+### 4. Run
+
+`npm run dev`, then open http://localhost:3000/tasks
 
 ## 1. Open a task and pay under it
 
