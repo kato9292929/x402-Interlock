@@ -76,15 +76,39 @@ async function sendAndConfirm(rpcUrl: string, feePayer: KeyPairSigner, instructi
   );
   const signed = await signTransactionMessageWithSigners(message);
   const signature = getSignatureFromTransaction(signed);
+  // A preflight (simulation) failure throws a kit SolanaError whose context carries the
+  // program logs; callers print it with formatSolanaError() (lib/solana/errors.ts).
   await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: "base64" }).send();
   for (let i = 0; i < 60; i++) {
     const { value } = await rpc.getSignatureStatuses([signature]).send();
     const st = value[0];
-    if (st?.err) throw new Error(`transaction ${signature} failed: ${JSON.stringify(st.err)}`);
+    if (st?.err) {
+      // Landed but failed: fetch the logs so the error is as informative as a simulation failure.
+      const tx = await rpc
+        .getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0, encoding: "json" })
+        .send()
+        .catch(() => null);
+      const err = new Error(`transaction ${signature} failed on chain`) as Error & { context?: unknown; cause?: unknown };
+      err.context = { logs: tx?.meta?.logMessages ?? [] };
+      err.cause = { message: `transaction error: ${JSON.stringify(st.err, (_k, x) => (typeof x === "bigint" ? x.toString() : x))}` };
+      throw err;
+    }
     if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return signature;
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error(`transaction ${signature} not confirmed in time`);
+}
+
+/** A setup problem the owner must fix (missing SOL, missing token account, authority not set up). */
+export class SolanaSetupError extends Error {}
+
+export interface SetupReport {
+  rpc: string;
+  mint: string;
+  owner: { address: string; sol_lamports: string; usdc_ata: string; usdc_ata_exists: boolean; usdc_atomic?: string };
+  gate: { address: string; sol_lamports: string };
+  subscription_authority: { address: string; exists: boolean };
+  problems: string[];
 }
 
 export class SolanaAllowanceChain implements AllowanceChain {
@@ -101,6 +125,8 @@ export class SolanaAllowanceChain implements AllowanceChain {
     const owner = await ownerSigner();
     const tokenMint = address(solanaMint());
     const [sa] = await findSubscriptionAuthorityPda({ user: owner.address, tokenMint });
+    const saInfo = await createSolanaRpc(this.rpcUrl).getAccountInfo(sa, { encoding: "base64" }).send();
+    if (!saInfo.value) throw new SolanaSetupError(`the owner's SubscriptionAuthority ${sa} does not exist yet. Run \`npm run task -- init-authority\` first.`);
     const [delegation] = await findFixedDelegationPda({
       subscriptionAuthority: sa,
       delegator: owner.address,
@@ -154,17 +180,61 @@ export class SolanaAllowanceChain implements AllowanceChain {
   }
 
   /** One-time owner setup: the per-mint SubscriptionAuthority must exist before any Allowance. */
-  async initOwnerAuthority() {
+  /** Everything the owner and gate need before tasks can work, read from chain. */
+  async preflight(): Promise<SetupReport> {
+    const rpc = createSolanaRpc(this.rpcUrl);
     const owner = await ownerSigner();
+    const gate = await gateSigner();
     const tokenMint = address(solanaMint());
     const [ownerAta] = await findAssociatedTokenPda({ owner: owner.address, mint: tokenMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    const [sa] = await findSubscriptionAuthorityPda({ user: owner.address, tokenMint });
+    const [ownerSol, gateSol, ataInfo, saInfo] = await Promise.all([
+      rpc.getBalance(owner.address, { commitment: "confirmed" }).send(),
+      rpc.getBalance(gate.address, { commitment: "confirmed" }).send(),
+      rpc.getAccountInfo(ownerAta, { encoding: "base64", commitment: "confirmed" }).send(),
+      rpc.getAccountInfo(sa, { encoding: "base64", commitment: "confirmed" }).send(),
+    ]);
+    let usdc: string | undefined;
+    if (ataInfo.value) usdc = (await rpc.getTokenAccountBalance(ownerAta, { commitment: "confirmed" }).send()).value.amount;
+    const problems: string[] = [];
+    if (ownerSol.value === 0n) problems.push(`owner ${owner.address} has no devnet SOL (fees and rent). Airdrop at https://faucet.solana.com`);
+    if (gateSol.value === 0n) problems.push(`gate ${gate.address} has no devnet SOL (fees for pulls and x402 payments). Airdrop at https://faucet.solana.com`);
+    if (!ataInfo.value) {
+      problems.push(
+        `owner has no USDC token account for mint ${tokenMint} (expected associated token account ${ownerAta}). ` +
+          `Get devnet USDC from https://faucet.circle.com (Solana Devnet) to ${owner.address}, which creates it, or run ` +
+          `\`spl-token create-account ${tokenMint} --owner ${owner.address} --url devnet\``,
+      );
+    } else if (usdc === "0") {
+      problems.push(`owner's USDC token account ${ownerAta} holds 0 USDC. Get devnet USDC from https://faucet.circle.com`);
+    }
+    return {
+      rpc: this.rpcUrl,
+      mint: tokenMint,
+      owner: { address: owner.address, sol_lamports: ownerSol.value.toString(), usdc_ata: ownerAta, usdc_ata_exists: !!ataInfo.value, usdc_atomic: usdc },
+      gate: { address: gate.address, sol_lamports: gateSol.value.toString() },
+      subscription_authority: { address: sa, exists: !!saInfo.value },
+      problems,
+    };
+  }
+
+  async initOwnerAuthority() {
+    const report = await this.preflight();
+    const ownerProblems = report.problems.filter((p) => !p.startsWith("gate "));
+    if (ownerProblems.some((p) => /no devnet SOL|no USDC token account/.test(p))) {
+      throw new SolanaSetupError(`cannot set up the SubscriptionAuthority yet:\n  - ${ownerProblems.join("\n  - ")}`);
+    }
+    if (report.subscription_authority.exists) {
+      return { already_initialized: true, subscription_authority: report.subscription_authority.address };
+    }
+    const owner = await ownerSigner();
     const ix = await getInitSubscriptionAuthorityOverlayInstructionAsync({
       owner,
-      tokenMint,
+      tokenMint: address(report.mint),
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
-      userAta: ownerAta,
+      userAta: address(report.owner.usdc_ata),
     });
-    return { signature: await sendAndConfirm(this.rpcUrl, owner, [ix]) };
+    return { signature: await sendAndConfirm(this.rpcUrl, owner, [ix]), subscription_authority: report.subscription_authority.address };
   }
 }
 
