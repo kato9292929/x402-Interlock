@@ -16,6 +16,8 @@
   "dependencies": {
     "@solana-program/token": "^0.15.0",
     "@solana/kit": "^7.1.1",
+    "@solana/kit-plugin-rpc": "^0.15.0",
+    "@solana/kit-plugin-signer": "^0.13.0",
     "@solana/subscriptions": "^0.5.0",
     "@worldcoin/idkit": "^4.3.0",
     "@worldcoin/idkit-core": "^4.3.0",

@@ -84,10 +84,12 @@ facilitator. The on-chain Allowance still limits the total. If the seller does n
 pull, the funds stay in the gate's account (the timeline flags that spend and on-chain use differ).
 
 Chain calls live in [`lib/solana/allowance.ts`](lib/solana/allowance.ts): create
-[L100](lib/solana/allowance.ts#L100), read
-[L122](lib/solana/allowance.ts#L122), revoke
-[L130](lib/solana/allowance.ts#L130), pull
-[L136](lib/solana/allowance.ts#L136).
+[L84](lib/solana/allowance.ts#L84), read
+[L109](lib/solana/allowance.ts#L109), revoke
+[L117](lib/solana/allowance.ts#L117), pull
+[L125](lib/solana/allowance.ts#L125). All writes go through the SDK's plugin client
+(`client.subscriptions.instructions.*`, built in [L55](lib/solana/allowance.ts#L55)), which
+reads the SubscriptionAuthority's init id for create and resolves transfer-hook accounts for pull.
 
 **Owner key on the server (devnet trade-off).** Creating and revoking an Allowance must be
 signed by the delegator (the owner). In this build the owner key sits on the server

@@ -7,6 +7,8 @@ export const USDC_DEVNET_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 export const SUBSCRIPTIONS_PROGRAM_ID = "De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44";
 
 export const solanaRpcUrl = () => process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
+/** WebSocket endpoint for confirmations. Unset: the RPC URL with http(s) swapped for ws(s). */
+export const solanaRpcSubscriptionsUrl = () => process.env.SOLANA_RPC_WS_URL || undefined;
 export const solanaNetwork = () => process.env.SOLANA_NETWORK ?? SOLANA_DEVNET;
 export const solanaMint = () => process.env.SOLANA_USDC_MINT ?? USDC_DEVNET_MINT;
 export const isSolanaNetwork = (network: string) => network.startsWith("solana:");
