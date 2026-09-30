@@ -11,7 +11,8 @@
     "agent": "tsx --env-file-if-exists=.env.local scripts/agent.ts",
     "verify-live": "tsx --env-file-if-exists=.env.local scripts/verify-live.ts",
     "first-success": "tsx scripts/first-success.ts",
-    "task": "tsx --env-file-if-exists=.env.local scripts/task.ts"
+    "task": "tsx --env-file-if-exists=.env.local scripts/task.ts",
+    "test:devnet": "SOLANA_DEVNET_TEST=1 node --env-file-if-exists=.env.local --import tsx --test test/solana.devnet.test.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",
@@ -37,5 +38,9 @@
     "@types/react-dom": "^19",
     "tsx": "^4.23.15",
     "typescript": "^5"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "fsevents": false
   }
 }

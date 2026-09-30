@@ -1,7 +1,6 @@
 // Live devnet check of the Allowance adapter: create -> read -> revoke -> read.
-// Skipped unless SOLANA_DEVNET_TEST=1 and the keys are set (it spends devnet SOL for rent/fees):
-//   SOLANA_DEVNET_TEST=1 SOLANA_RPC_URL=https://api.devnet.solana.com \
-//   OWNER_SOLANA_PRIVATE_KEY=... GATE_SOLANA_PRIVATE_KEY=... npm test
+// Skipped unless SOLANA_DEVNET_TEST=1 and the keys are set (it spends devnet SOL for rent/fees).
+// `npm run test:devnet` sets the flag and reads the keys from .env.local (docs/DEMO-colosseum.md).
 // The owner needs devnet SOL and a devnet USDC token account, and must have run
 // `npm run task -- init-authority` once.
 
@@ -11,7 +10,7 @@ import { SolanaAllowanceChain } from "../lib/solana/allowance";
 
 const enabled = process.env.SOLANA_DEVNET_TEST === "1" && !!process.env.OWNER_SOLANA_PRIVATE_KEY && !!process.env.GATE_SOLANA_PRIVATE_KEY;
 
-test("devnet: create, read, revoke an Allowance delegated to the gate key", { skip: !enabled && "SOLANA_DEVNET_TEST not set" }, async () => {
+test("devnet: create, read, revoke an Allowance delegated to the gate key", { skip: !enabled && "needs SOLANA_DEVNET_TEST=1, OWNER_SOLANA_PRIVATE_KEY and GATE_SOLANA_PRIVATE_KEY (npm run test:devnet)" }, async () => {
   const chain = new SolanaAllowanceChain();
   const gate = await chain.gateAddress();
   const owner = await chain.ownerAddress();
