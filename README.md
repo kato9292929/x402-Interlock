@@ -66,10 +66,10 @@ from startup or from an earlier step.
 | 3 | before the task's deadline | `BLOCK TASK_EXPIRED` | same |
 | 4 | the Allowance exists, is delegated to the gate key, has not expired on chain; the RPC answered | `BLOCK ALLOWANCE_REVOKED` / `_DELEGATE_MISMATCH` / `_EXPIRED` / `_UNAVAILABLE` (fail closed) | [`lib/tasks.ts#L184`](lib/tasks.ts#L184) |
 | 5 | the remaining amount covers this payment | `BLOCK ALLOWANCE_INSUFFICIENT` | same |
-| 6 | then the existing Intercepta screening, fixed rules and action policy | as before | [`lib/gate.ts#L135`](lib/gate.ts#L135) |
+| 6 | then the existing Intercepta screening, fixed rules and action policy | as before | [`lib/gate.ts#L159`](lib/gate.ts#L159) |
 
 Checks 1–5 run when a payment is evaluated, and again at signing time
-([`lib/gate.ts#L275`](lib/gate.ts#L275)). The re-check matters when a
+([`lib/gate.ts#L317`](lib/gate.ts#L317)). The re-check matters when a
 payment waited for the owner's approval: meanwhile the task may have been closed or the budget
 used by other payments. Each paid payment therefore has two `allowance_checked` entries,
 `evaluate` and `signing`, each with its own slot. The tests assert this, and removing the
@@ -78,7 +78,7 @@ signing-time check makes them fail.
 **Pull, then pay.** A Fixed delegation can only be spent through the program's `transferFixed`,
 signed by the delegatee. A standard x402 Solana payment is a plain token transfer signed by the
 payer. So for each approved payment the gate first pulls exactly that amount under the Allowance
-into its own token account ([`lib/gate.ts#L280`](lib/gate.ts#L280)), then pays
+into its own token account ([`lib/gate.ts#L322`](lib/gate.ts#L322)), then pays
 the seller with a normal x402 `exact` payment signed by the same gate key, through the PayAI
 facilitator. The on-chain Allowance still limits the total. If the seller does not settle after a
 pull, the funds stay in the gate's account (the timeline flags that spend and on-chain use differ).
@@ -114,7 +114,7 @@ every check, but we keep them separate:
 
 Money rules cannot see a disclosed address or a promised discount: those cost 0 and pass any
 budget. So the agent also asks before other kinds of action
-([`lib/gate.ts#L468`](lib/gate.ts#L468)). Policies are in
+([`lib/gate.ts#L510`](lib/gate.ts#L510)). Policies are in
 [`config/actions.json`](config/actions.json):
 
 | Action | What it covers | Default policy |
@@ -144,6 +144,20 @@ no Solana chain, and the address/token scans are documented for EVM addresses. *
 itself cannot be screened.** A Solana payment is screened, as before, through its Base mainnet
 stand-ins (`screening.targets` in `config/policy.json`, and devnet USDC → Base USDC in
 `config/screening.json`).
+
+What runs on a Solana payment:
+
+| Check | On Solana | Why |
+|---|---|---|
+| Quick / Deep Scan Address | runs, on the seller's Base mainnet stand-in | same as Base |
+| Scan Token | runs, on Base USDC | same as Base |
+| Scan Message | **not run**; recorded as `SCAN_MESSAGE_NOT_APPLICABLE_SOLANA` in the decision's reasons and in `screening_result.skipped` | it screens an EIP-712 message before signing. On Solana the gate signs a Solana transaction (an SPL token transfer), so there is no EIP-712 message. Sending an EIP-3009 message instead (as the first Solana build did) screened something that is never signed. |
+
+The two checks that run still decide as before: RISKY or UNAVAILABLE (including HTTP 429) BLOCKs.
+
+When screening BLOCKs, the agent's output, the server log (`[screening] …` lines) and
+`npm run why` all name the check, its HTTP status and its reason; `npm run why` also prints the
+start of the raw Intercepta response from the ledger.
 
 ### Ledger additions
 
@@ -189,9 +203,9 @@ Official reference: https://docs.web3antivirus.io/reference/
 | Reading `ToxicScoreShortResponseV2` (both address scans) | [`lib/intercepta.ts#L72`](lib/intercepta.ts#L72) |
 | Scan Token `GET …/token-intelligence/token/{address}/risks?chainId=8453` · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L195`](lib/intercepta.ts#L195), reading `TokenRiskAnalysisV2Response` [L98](lib/intercepta.ts#L98) |
 | Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L230`](lib/intercepta.ts#L230), verdict from `riskGroup` [L210](lib/intercepta.ts#L210) |
-| Testnet payTo → mainnet screening address | [`lib/policy.ts#L110`](lib/policy.ts#L110) |
-| Screening on Base mainnet + aggregation | [`lib/screening.ts#L93`](lib/screening.ts#L93) |
-| Called from the gate, before any signing | [`lib/gate.ts#L151`](lib/gate.ts#L151) |
+| Testnet payTo → mainnet screening address | [`lib/policy.ts#L112`](lib/policy.ts#L112) |
+| Screening on Base mainnet + aggregation | [`lib/screening.ts#L111`](lib/screening.ts#L111) |
+| Called from the gate, before any signing | [`lib/gate.ts#L177`](lib/gate.ts#L177) |
 
 ### How Intercepta results are judged
 
@@ -251,7 +265,7 @@ The API key is not saved.
 | RP-signed request (`signRequest`, computed locally, TTL) | [`lib/world.ts#L85`](lib/world.ts#L85) |
 | **Server-side verification** | [`lib/world.ts#L130`](lib/world.ts#L130): nonce / action / environment ([L135](lib/world.ts#L135)), signal = this payment ([L144](lib/world.ts#L144)), World Developer API `POST https://developer.world.org/api/v4/verify/{rp_id}` ([L155](lib/world.ts#L155)), owner nullifier ([L185](lib/world.ts#L185)) |
 | Sandbox/staging API key (optional, never sent for production) | [`lib/world.ts#L30`](lib/world.ts#L30), 401/403 diagnosis [L168](lib/world.ts#L168) |
-| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L373`](lib/gate.ts#L373), [L402](lib/gate.ts#L402), [L355](lib/gate.ts#L355), [L408](lib/gate.ts#L408) |
+| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L415`](lib/gate.ts#L415), [L444](lib/gate.ts#L444), [L397](lib/gate.ts#L397), [L450](lib/gate.ts#L450) |
 | IDKit widget (relays the proof only) | [`app/approve/[id]/approval-client.tsx#L101`](app/approve/%5Bid%5D/approval-client.tsx#L101) |
 
 The browser only passes the IDKit result along. A payment is signed only after the server has

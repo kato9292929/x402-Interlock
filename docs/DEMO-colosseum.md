@@ -139,10 +139,28 @@ npm run agent -- sol-clip --task task_... --times 4
 ```
 
 Expected:
-- purchases 1–3 (0.30 USDC each): `PAY WITHIN_POLICY -> PAID`, each with a devnet tx link
+- purchases 1–3 (0.30 USDC each): `PAY WITHIN_POLICY, SCAN_MESSAGE_NOT_APPLICABLE_SOLANA -> PAID`,
+  then three `[gate]   screening …` lines (`quick_scan_address: SAFE (HTTP 200)`,
+  `scan_token: SAFE (HTTP 200)`, `scan_message: SKIPPED`), and a devnet tx link
 - purchase 4: `BLOCK ALLOWANCE_INSUFFICIENT` (0.10 USDC left)
 - `/tasks`: 0.90 spent, 0.10 remaining on chain (with the slot)
 - each payment's ledger events include two `allowance_checked` entries (evaluate, signing)
+
+`SCAN_MESSAGE_NOT_APPLICABLE_SOLANA` is expected: Scan Message screens EIP-712 messages, and a
+Solana payment signs a Solana transaction, so that check is recorded as not run (README,
+"Intercepta on Solana").
+
+### When a purchase is blocked
+
+```bash
+npm run why
+```
+
+It prints the latest decision from the ledger: the decision and its reasons, the Allowance reads,
+and each Intercepta check with its HTTP status, reasons, error and the start of the raw response.
+`<- RATE LIMITED` marks an HTTP 429 (Intercepta's rate limit; wait and retry). `npm run why --
+<decision_id>` shows a specific one. The server terminal prints the same per-check lines as
+`[screening] …`.
 
 ## 2. Muse: zero money, still stopped
 
