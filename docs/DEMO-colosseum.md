@@ -30,7 +30,7 @@ Solana block (see `.env.example`):
 
 | Variable | Value |
 |---|---|
-| `OWNER_TOKEN` | any secret; must differ from `AGENT_TOKEN`. The task CLI sends it. |
+| `OWNER_TOKEN` | the owner's API token; must differ from `AGENT_TOKEN`. The task CLI sends it. Made by `new-token` below. |
 | `SOLANA_RPC_URL` | `https://api.devnet.solana.com` |
 | `SOLANA_RPC_WS_URL` | optional. Unset: `SOLANA_RPC_URL` with `http` → `ws`, which works for the public devnet RPC. Set it only for an RPC provider with a separate WebSocket URL. |
 | `OWNER_SOLANA_PRIVATE_KEY` | owner keypair, base58 64-byte secret key (Phantom export format) |
@@ -64,22 +64,29 @@ If the owner has SOL but no USDC token account yet, create it explicitly:
 spl-token create-account 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU --owner <OWNER_ADDRESS> --fee-payer <owner-keypair.json> --url devnet
 ```
 
-## Agent and seller addresses
+## Owner token, agent and seller addresses
 
-Neither needs a wallet app, the Solana CLI or a faucet. Run one line at a time:
+None of these needs editing `.env.local` by hand, a wallet app, the Solana CLI or a faucet.
+Run one line at a time:
 
 ```bash
+npm run task -- new-token OWNER_TOKEN
 npm run task -- new-address agent --env AGENT_SOLANA_ADDRESS
 npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO
 npm run task -- seller-account
 ```
 
-1. `new-address` makes a new keypair, saves it to `keys/<name>.json` (solana-keygen format,
+1. `new-token OWNER_TOKEN` writes a random 43-character token into `.env.local`. It refuses if
+   `OWNER_TOKEN` already has a value, or if the new value would equal `AGENT_TOKEN` (the task API
+   refuses that). The token is not printed. Expected:
+   `{ "name": "OWNER_TOKEN", "env": "OWNER_TOKEN written to .env.local", "length": 43 }`.
+   Start (or restart) `npm run dev` after this: the server reads it at startup.
+2. `new-address` makes a new keypair, saves it to `keys/<name>.json` (solana-keygen format,
    readable only by you, ignored by git) and writes the public address into `.env.local`. It fills
    an empty `NAME=` line copied from `.env.example`, or adds the line on a line of its own. It
    refuses if the variable already has a value, so it never replaces an address you set.
    Expected: `{ "name": "agent", "address": "…", "keypair_file": "keys/agent.json", "env": "AGENT_SOLANA_ADDRESS written to .env.local" }`.
-2. `seller-account` creates the seller's USDC token account (associated token account for the
+3. `seller-account` creates the seller's USDC token account (associated token account for the
    devnet USDC mint). The owner signs and pays the rent (≈0.002 SOL); the seller signs nothing.
    Expected: `{ "signature": "…", "seller": "…", "usdc_ata": "…" }` and an Explorer link, or
    `already exists; nothing to do`.
