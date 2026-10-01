@@ -84,10 +84,10 @@ facilitator. The on-chain Allowance still limits the total. If the seller does n
 pull, the funds stay in the gate's account (the timeline flags that spend and on-chain use differ).
 
 Chain calls live in [`lib/solana/allowance.ts`](lib/solana/allowance.ts): create
-[L84](lib/solana/allowance.ts#L84), read
-[L109](lib/solana/allowance.ts#L109), revoke
-[L117](lib/solana/allowance.ts#L117), pull
-[L125](lib/solana/allowance.ts#L125). All writes go through the SDK's plugin client
+[L92](lib/solana/allowance.ts#L92), read
+[L117](lib/solana/allowance.ts#L117), revoke
+[L125](lib/solana/allowance.ts#L125), pull
+[L133](lib/solana/allowance.ts#L133). All writes go through the SDK's plugin client
 (`client.subscriptions.instructions.*`, built in [L55](lib/solana/allowance.ts#L55)), which
 reads the SubscriptionAuthority's init id for create and resolves transfer-hook accounts for pull.
 
@@ -95,6 +95,20 @@ reads the SubscriptionAuthority's init id for create and resolves transfer-hook 
 signed by the delegator (the owner). In this build the owner key sits on the server
 (`OWNER_SOLANA_PRIVATE_KEY`), and only the owner-authenticated task API can use it; the gate API
 never does. A production version should have the owner sign in their own wallet.
+
+**Agent and seller are different addresses.** `AGENT_SOLANA_ADDRESS` is used in one place: task
+issuance refuses to delegate the Allowance to it ([`lib/tasks.ts#L92`](lib/tasks.ts#L92)).
+`SELLER_SOLANA_PAY_TO` is the payee the allowlist admits. Setting both to one address would pass
+every check, but we keep them separate:
+- the demo agent holds no Solana key (it only calls the gate API), so its address states which
+  key must never become the delegate. Making it the seller says "the agent is the payee", and the
+  ledger would then show the owner's budget paid to the agent, which is exactly the self-dealing
+  the gate is there to stop;
+- if the agent later gets a real wallet, an allowlisted seller that is the agent's wallet becomes
+  a way to move the budget to the agent through ordinary allowlisted purchases;
+- a separate address costs nothing: the agent's needs no SOL or USDC.
+
+`npm run task -- preflight` warns (does not block) when the two are equal.
 
 ### Actions, not only payments
 

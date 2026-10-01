@@ -35,8 +35,8 @@ Solana block (see `.env.example`):
 | `SOLANA_RPC_WS_URL` | optional. Unset: `SOLANA_RPC_URL` with `http` → `ws`, which works for the public devnet RPC. Set it only for an RPC provider with a separate WebSocket URL. |
 | `OWNER_SOLANA_PRIVATE_KEY` | owner keypair, base58 64-byte secret key (Phantom export format) |
 | `GATE_SOLANA_PRIVATE_KEY` | gate keypair, same format, a different keypair from the owner |
-| `AGENT_SOLANA_ADDRESS` | the agent's public key (must differ from owner and gate) |
-| `SELLER_SOLANA_PAY_TO` | the demo seller's public key |
+| `AGENT_SOLANA_ADDRESS` | the agent's public key; must differ from owner and gate, and should differ from the seller. Made by `new-address` below. |
+| `SELLER_SOLANA_PAY_TO` | the demo seller's public key. Made by `new-address` below. |
 
 To add one line without it joining the previous line, append with a leading newline:
 
@@ -55,13 +55,40 @@ they are the ones you funded.
 | owner | a **USDC token account** for mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` | the Allowance delegates from this account | created automatically when USDC is sent to the owner (below) |
 | owner | devnet USDC (≥ the task budget) | the budget itself | https://faucet.circle.com → Solana Devnet → the owner address |
 | gate | devnet SOL | fees for each pull and rent for its own USDC token account (created on the first pull) | `solana airdrop 1 <GATE_ADDRESS> --url devnet` |
-| seller | a USDC token account | to receive payments | send it any devnet USDC once, or `spl-token create-account` for it |
+| seller | a USDC token account (no SOL, no USDC) | x402 payments transfer into it | `npm run task -- seller-account` (the owner pays the rent) |
+| agent | nothing | its address is only checked, never used on chain | — |
 
 If the owner has SOL but no USDC token account yet, create it explicitly:
 
 ```bash
 spl-token create-account 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU --owner <OWNER_ADDRESS> --fee-payer <owner-keypair.json> --url devnet
 ```
+
+## Agent and seller addresses
+
+Neither needs a wallet app, the Solana CLI or a faucet. Run one line at a time:
+
+```bash
+npm run task -- new-address agent --env AGENT_SOLANA_ADDRESS
+npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO
+npm run task -- seller-account
+```
+
+1. `new-address` makes a new keypair, saves it to `keys/<name>.json` (solana-keygen format,
+   readable only by you, ignored by git) and writes the public address into `.env.local`. It fills
+   an empty `NAME=` line copied from `.env.example`, or adds the line on a line of its own. It
+   refuses if the variable already has a value, so it never replaces an address you set.
+   Expected: `{ "name": "agent", "address": "…", "keypair_file": "keys/agent.json", "env": "AGENT_SOLANA_ADDRESS written to .env.local" }`.
+2. `seller-account` creates the seller's USDC token account (associated token account for the
+   devnet USDC mint). The owner signs and pays the rent (≈0.002 SOL); the seller signs nothing.
+   Expected: `{ "signature": "…", "seller": "…", "usdc_ata": "…" }` and an Explorer link, or
+   `already exists; nothing to do`.
+
+The seller's secret key is kept only so the devnet USDC it receives can be moved later; the
+demo never uses it. The agent's is never used.
+
+Why the agent and the seller should not share one address: see "Agent and seller are different
+addresses" in the README's Colosseum section. `preflight` warns if they are equal.
 
 ## Devnet run, in order
 
@@ -73,8 +100,11 @@ npm run task -- init-authority
 npm run test:devnet
 ```
 
-1. `preflight` (read-only) lists each problem in plain words (no SOL, no USDC token account,
-   0 USDC) with the address it expects. Expected: no problems, `subscription_authority.exists: true`.
+1. `preflight` (read-only) lists each problem in plain words with what to run: no SOL, no USDC
+   token account or 0 USDC for the owner, `OWNER_TOKEN` missing or equal to `AGENT_TOKEN`,
+   `AGENT_SOLANA_ADDRESS` / `SELLER_SOLANA_PAY_TO` missing or not an address, the seller's USDC
+   token account missing. Expected: `all set`, `subscription_authority.exists: true`,
+   `seller.usdc_ata_exists: true`, and no `warning(s)` block.
 2. `init-authority` sets up the owner's SubscriptionAuthority once. It runs the same checks first,
    and answers `already_initialized: true` if it exists (the case after the first success).
 3. `test:devnet` reads the keys from `.env.local` and runs the live Allowance test: create a
