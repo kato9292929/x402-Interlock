@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
-import { envValue, generateSolanaKeypair, setEnvValue } from "../lib/solana/setup";
+import { envValue, generateSolanaKeypair, setEnvValue, setNewToken } from "../lib/solana/setup";
 
 test("generated keypair is in solana-keygen format and loads back to the same address", async () => {
   const kp = await generateSolanaKeypair();
@@ -26,4 +26,22 @@ test("setEnvValue fills an empty line in place, appends on its own line otherwis
   assert.equal(setEnvValue("X=1", "AGENT_SOLANA_ADDRESS", "Def"), "X=1\nAGENT_SOLANA_ADDRESS=Def\n");
   assert.equal(setEnvValue("", "K", "v"), "K=v\n");
   assert.throws(() => setEnvValue("K=already\n", "K", "v"), /already set/);
+});
+
+test("setNewToken writes a random token, never overwrites, never equals another token", () => {
+  const out = setNewToken("AGENT_TOKEN=abc\n", "OWNER_TOKEN");
+  const v = envValue(out, "OWNER_TOKEN");
+  assert.ok(v.length >= 40 && v !== "abc");
+  assert.ok(out.startsWith("AGENT_TOKEN=abc\nOWNER_TOKEN="));
+  assert.throws(() => setNewToken("OWNER_TOKEN=x\n", "OWNER_TOKEN"), /already set/);
+  assert.throws(() => setNewToken("AGENT_TOKEN=same\n", "OWNER_TOKEN", {}, "same"), /would equal AGENT_TOKEN/);
+  assert.throws(() => setNewToken("", "OWNER_TOKEN", { AGENT_TOKEN: "same" }, "same"), /would equal AGENT_TOKEN/);
+  assert.throws(() => setNewToken("", "SELLER_SOLANA_PAY_TO"), /not a token variable/);
+});
+
+test("refusing to overwrite a token does not echo it", () => {
+  assert.throws(
+    () => setNewToken("OWNER_TOKEN=s3cret\n", "OWNER_TOKEN"),
+    (e: Error) => /already set/.test(e.message) && !e.message.includes("s3cret"),
+  );
 });

@@ -191,8 +191,8 @@ export class SolanaAllowanceChain implements AllowanceChain {
     }
 
     // The owner CLI and the agent use different tokens; the task API refuses otherwise.
-    if (!process.env.OWNER_TOKEN) problems.push("OWNER_TOKEN is not set in .env.local (the task CLI sends it). Set any secret that differs from AGENT_TOKEN");
-    else if (process.env.OWNER_TOKEN === process.env.AGENT_TOKEN) problems.push("OWNER_TOKEN equals AGENT_TOKEN; the task API refuses that. Give OWNER_TOKEN its own value");
+    if (!process.env.OWNER_TOKEN) problems.push("OWNER_TOKEN is not set in .env.local (the task CLI sends it). Run: npm run task -- new-token OWNER_TOKEN");
+    else if (process.env.OWNER_TOKEN === process.env.AGENT_TOKEN) problems.push("OWNER_TOKEN equals AGENT_TOKEN; the task API refuses that. Delete the OWNER_TOKEN line from .env.local, then run: npm run task -- new-token OWNER_TOKEN");
 
     // Agent: only used to prove the Allowance is not delegated to it. Needs no SOL or USDC.
     if (!agent) problems.push(`AGENT_SOLANA_ADDRESS is not set; opening a task refuses without it. Run: ${NEW_AGENT}`);

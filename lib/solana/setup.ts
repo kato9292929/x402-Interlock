@@ -1,5 +1,5 @@
 import { createKeyPairSignerFromBytes, getBase58Decoder } from "@solana/kit";
-import { webcrypto } from "node:crypto";
+import { randomBytes, webcrypto } from "node:crypto";
 
 // Helpers for the owner CLI's setup commands (scripts/task.ts). Nothing here runs in the server.
 
@@ -37,9 +37,27 @@ export function envValue(text: string, name: string): string {
  */
 export function setEnvValue(text: string, name: string, value: string): string {
   const current = envValue(text, name);
-  if (current) throw new Error(`${name} is already set in .env.local (${current}); not overwriting`);
+  // Credentials are not echoed back; addresses are, so the owner can see which one is there.
+  const shown = /TOKEN|KEY|SECRET/.test(name) ? "" : ` (${current})`;
+  if (current) throw new Error(`${name} is already set in .env.local${shown}; not overwriting`);
   const re = new RegExp(`^(\\s*(?:export\\s+)?${name}\\s*=).*$`, "m");
   if (re.test(text)) return text.replace(re, `${name}=${value}`);
   const sep = text === "" || text.endsWith("\n") ? "" : "\n";
   return `${text}${sep}${name}=${value}\n`;
+}
+
+/**
+ * Set a new random bearer token `name` (e.g. OWNER_TOKEN) in an env file's text. Refuses if the
+ * name already has a value, or if the new value equals any other *_TOKEN in the file or in `env`
+ * (the task API refuses OWNER_TOKEN == AGENT_TOKEN). The token itself is never returned.
+ */
+export function setNewToken(text: string, name: string, env: Record<string, string | undefined> = {}, token = randomBytes(32).toString("base64url")): string {
+  if (!/^[A-Z][A-Z0-9_]*_TOKEN$/.test(name)) throw new Error(`${name} is not a token variable (expected a name like OWNER_TOKEN)`);
+  const others = new Set<string>();
+  for (const m of text.matchAll(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*_TOKEN)\s*=/gm)) if (m[1] !== name) others.add(m[1]);
+  for (const k of Object.keys(env)) if (/_TOKEN$/.test(k) && k !== name) others.add(k);
+  for (const other of others) {
+    if (token === (envValue(text, other) || env[other])) throw new Error(`the new ${name} would equal ${other}; refusing`);
+  }
+  return setEnvValue(text, name, token);
 }

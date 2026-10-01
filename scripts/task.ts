@@ -7,12 +7,13 @@
 //   npm run task -- preflight               # check SOL, the owner's USDC token account and the authority (direct, read-only)
 //   npm run task -- init-authority          # one-time: owner's SubscriptionAuthority for USDC (direct, needs OWNER_SOLANA_PRIVATE_KEY)
 //   npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO   # new keypair in keys/seller.json; address into .env.local
+//   npm run task -- new-token OWNER_TOKEN   # random token into .env.local; never overwrites, never equal to AGENT_TOKEN
 //   npm run task -- seller-account          # create the seller's USDC token account, paid by the owner (direct)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SolanaAllowanceChain, SolanaSetupError } from "../lib/solana/allowance";
 import { formatSolanaError } from "../lib/solana/errors";
-import { generateSolanaKeypair, setEnvValue } from "../lib/solana/setup";
+import { envValue, generateSolanaKeypair, setEnvValue, setNewToken } from "../lib/solana/setup";
 
 const ENV_FILE = ".env.local";
 
@@ -71,14 +72,31 @@ async function main() {
     else console.log("\nalready set up; nothing to do");
   } else if (cmd === "new-address") {
     await newAddress(process.argv[3], arg("--env"));
+  } else if (cmd === "new-token") {
+    newToken(process.argv[3]);
   } else if (cmd === "seller-account") {
     const r = await new SolanaAllowanceChain().createSellerTokenAccount();
     console.log(JSON.stringify(r, null, 2));
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|seller-account");
+    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|seller-account");
   }
+}
+
+// A random bearer token written straight into .env.local, so nobody edits the file by hand.
+// The value is not printed: it is a credential, and .env.local is where it is read from.
+function newToken(name: string | undefined) {
+  if (!name) throw new SolanaSetupError("usage: npm run task -- new-token OWNER_TOKEN");
+  const envText = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, "utf8") : "";
+  let next: string;
+  try {
+    next = setNewToken(envText, name, process.env);
+  } catch (e) {
+    throw new SolanaSetupError((e as Error).message);
+  }
+  writeFileSync(ENV_FILE, next, { mode: 0o600 });
+  console.log(JSON.stringify({ name, env: `${name} written to ${ENV_FILE}`, length: envValue(next, name).length }, null, 2));
 }
 
 // A demo address (agent or seller). The secret key goes to keys/<name>.json (git-ignored, in
