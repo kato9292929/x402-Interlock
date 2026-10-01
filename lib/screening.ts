@@ -34,8 +34,16 @@ export function loadScreeningConfig(file = process.env.SCREENING_PATH ?? path.jo
   return JSON.parse(readFileSync(file, "utf8")) as ScreeningConfig;
 }
 
+/** A check deliberately not run, and why. Recorded so the ledger shows what was not screened. */
+export interface SkippedCheck {
+  check: CheckResult["check"];
+  code: "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA";
+  detail: string;
+}
+
 export interface ScreeningReport extends Screening {
   checks: CheckResult[];
+  skipped?: SkippedCheck[];
   /** The mainnet addresses actually screened, recorded next to the testnet payment. */
   screened_as?: { chain_id: number; payTo: MainnetAddress; asset: MainnetAddress };
 }
@@ -85,6 +93,16 @@ export function transferAuthorizationTypedData(p: {
 
 const unavailable = (reason: string): ScreeningReport => ({ verdict: "UNAVAILABLE", reasons: [reason], checks: [] });
 
+// Scan Message screens an EIP-712 message before it is signed. On Solana the gate signs a Solana
+// transaction (an SPL token transfer), not EIP-712, so there is no message Intercepta can read.
+// Sending it an EIP-3009 message instead would screen something that is never signed. So on
+// Solana the check is not run, and that is recorded rather than counted as a pass.
+export const SCAN_MESSAGE_SKIPPED_SOLANA: SkippedCheck = {
+  check: "scan_message",
+  code: "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA",
+  detail: "Solana payments sign a Solana transaction, not an EIP-712 message; Scan Message (EIP-712 only) has nothing to screen",
+};
+
 /**
  * Screen the option that would actually be paid: payTo, token and the authorization
  * message, each as its Base mainnet counterpart. `payToMainnet` comes from
@@ -93,7 +111,8 @@ const unavailable = (reason: string): ScreeningReport => ({ verdict: "UNAVAILABL
 export async function screen(
   option: PaymentOption & { extra?: Record<string, unknown>; maxTimeoutSeconds?: number },
   payToMainnet: MainnetAddress | undefined,
-  buyer: string,
+  /** EVM `from` for Scan Message. Not used on Solana, where Scan Message does not apply. */
+  buyer: string | undefined,
   website: string,
   tokenDecimals: number,
   cfg = loadScreeningConfig(),
@@ -106,20 +125,26 @@ export async function screen(
   if (!asset) return unavailable(`no mainnet counterpart configured for asset ${option.asset}`);
 
   const deep = BigInt(option.amount) > toAtomic(cfg.deep_scan_above, tokenDecimals);
-  const typed = transferAuthorizationTypedData({
-    from: buyer,
-    to: payToMainnet,
-    value: option.amount,
-    chainId,
-    verifyingContract: asset,
-    extra: option.extra,
-    maxTimeoutSeconds: option.maxTimeoutSeconds,
-  });
-  const checks = await Promise.all([
+  const onSolana = option.network.startsWith("solana:");
+  if (!onSolana && !buyer) return unavailable("no EVM `from` for Scan Message: set BUYER_PRIVATE_KEY or SCREENING_FROM_ADDRESS");
+  const scans: Promise<CheckResult>[] = [
     deep ? deepScanAddress(payToMainnet, rules.address, t) : quickScanAddress(payToMainnet, rules.address, t),
     scanToken(asset, String(chainId), rules.token, t, (cfg.token_cache_minutes ?? 10) * 60_000),
-    scanMessage(buyer, typed, String(chainId), website, rules.message, t),
-  ]);
+  ];
+  if (!onSolana) {
+    const typed = transferAuthorizationTypedData({
+      from: buyer!,
+      to: payToMainnet,
+      value: option.amount,
+      chainId,
+      verifyingContract: asset,
+      extra: option.extra,
+      maxTimeoutSeconds: option.maxTimeoutSeconds,
+    });
+    scans.push(scanMessage(buyer!, typed, String(chainId), website, rules.message, t));
+  }
+  const checks = await Promise.all(scans);
+  const skipped = onSolana ? [SCAN_MESSAGE_SKIPPED_SOLANA] : undefined;
 
   // Worst verdict wins: RISKY > UNAVAILABLE > CAUTION > SAFE.
   const risky = checks.filter((c) => c.verdict === "RISKY");
@@ -127,5 +152,5 @@ export async function screen(
   const caution = checks.filter((c) => c.verdict === "CAUTION");
   const verdict = risky.length ? "RISKY" : down.length ? "UNAVAILABLE" : caution.length ? "CAUTION" : "SAFE";
   const reasons = [...risky, ...down, ...caution].flatMap((c) => c.reasons.map((r) => `${c.check}: ${r}`));
-  return { verdict, reasons, checks, screened_as: { chain_id: chainId, payTo: payToMainnet, asset } };
+  return { verdict, reasons, checks, ...(skipped ? { skipped } : {}), screened_as: { chain_id: chainId, payTo: payToMainnet, asset } };
 }

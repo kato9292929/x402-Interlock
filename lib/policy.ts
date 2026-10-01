@@ -16,6 +16,8 @@ export type ReasonCode =
   | "ABOVE_HUMAN_THRESHOLD"
   | "REPURCHASE_IN_WINDOW"
   | "WITHIN_POLICY"
+  // a screening check that does not apply was not run (informational; lib/screening.ts)
+  | "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"
   // task and allowance checks (lib/tasks.ts)
   | "TASK_MISSING"
   | "TASK_NOT_ACTIVE"

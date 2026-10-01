@@ -102,6 +102,8 @@ let seller: Server, intercepta: Server, world: Server;
 let sellerUrl = "";
 let SELLER_SOL = "";
 const paid: string[] = [];
+const interceptaCalls: string[] = [];
+let interceptaQuickScanStatus = 200;
 const listen = (s: Server) => new Promise<string>((r) => s.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
 before(async () => {
@@ -168,6 +170,11 @@ before(async () => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
+      interceptaCalls.push(req.url!);
+      if (req.url!.includes("/quick-scan") && interceptaQuickScanStatus !== 200) {
+        res.writeHead(interceptaQuickScanStatus, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ message: "Too Many Requests" }));
+      }
       res.writeHead(200, { "content-type": "application/json" });
       if (req.url!.includes("/account/")) return res.end(JSON.stringify({ toxicScore: 0, traits: [] }));
       if (req.url!.includes("/token-intelligence/")) return res.end(JSON.stringify({ action: "info", detectors: [] }));
@@ -309,6 +316,36 @@ test("within budget: paid automatically; allowance read before evaluate and agai
     assert.ok(s.data_base64.length > 100);
   }
   assert.notEqual((checks[0].data.snapshot as { slot: string }).slot, (checks[1].data.snapshot as { slot: string }).slot);
+});
+
+test("Solana: Scan Message is not sent (no EIP-712 to screen); recorded as skipped with a reason code", async () => {
+  const t = await openTask("1.00");
+  const from = interceptaCalls.length;
+  const v = await pay(t.task_id);
+  assert.equal(v.status, "PAID", JSON.stringify(v));
+  const calls = interceptaCalls.slice(from);
+  assert.ok(calls.some((u) => u.includes("/quick-scan")));
+  assert.ok(!calls.some((u) => u.includes("/analysis/signature")), calls.join(" "));
+  assert.ok(v.reasons.includes("SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"));
+  assert.ok(v.screening?.some((c) => c.check === "scan_message" && c.verdict === "SKIPPED"));
+  const sr = new Ledger().byDecision(v.decision_id).find((e) => e.event_type === "screening_result")!;
+  assert.deepEqual((sr.data.skipped as { code: string }[]).map((x) => x.code), ["SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"]);
+  assert.ok(!(sr.data.checks as { check: string }[]).some((c) => c.check === "scan_message"));
+});
+
+test("Intercepta 429 -> BLOCK SCREENING_UNAVAILABLE, and the reply names the check and the status", async () => {
+  const t = await openTask("1.00");
+  interceptaQuickScanStatus = 429;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "BLOCKED");
+    assert.ok(v.reasons.includes("SCREENING_UNAVAILABLE"));
+    const q = v.screening?.find((c) => c.check === "quick_scan_address");
+    assert.equal(q?.http_status, 429);
+    assert.match(q!.reasons.join(" "), /rate limit reached \(HTTP 429\)/);
+  } finally {
+    interceptaQuickScanStatus = 200;
+  }
 });
 
 test("budget used up: stops with ALLOWANCE_INSUFFICIENT (0.30 x 3 of 1.00, 4th blocked)", async () => {

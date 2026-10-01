@@ -17,7 +17,7 @@ import {
 } from "./policy";
 import { createHash } from "node:crypto";
 import { isActionType, loadActionPolicies, type ActionType } from "./actions";
-import { screen } from "./screening";
+import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
 import { isSolanaNetwork } from "./solana/config";
 import { allowanceChain } from "./solana/allowance";
@@ -51,6 +51,30 @@ export interface GateView {
   action_type?: ActionType;
   notify?: boolean;
   result?: { http_status: number; body: unknown; settlement?: unknown };
+  /** One line per screening check, so a BLOCK says which check failed and how (no secrets in it). */
+  screening?: ScreeningSummary[];
+}
+
+export interface ScreeningSummary {
+  check: string;
+  verdict: string;
+  http_status?: number;
+  reasons: string[];
+  error?: string;
+}
+
+function summarizeScreening(report: ScreeningReport): ScreeningSummary[] {
+  const out: ScreeningSummary[] = report.checks.map((c) => ({
+    check: c.check,
+    verdict: c.verdict,
+    ...(c.http_status !== undefined ? { http_status: c.http_status } : {}),
+    reasons: c.reasons,
+    ...(c.error ? { error: c.error } : {}),
+  }));
+  for (const s of report.skipped ?? []) out.push({ check: s.check, verdict: "SKIPPED", reasons: [s.code, s.detail] });
+  // No check ran at all (e.g. no mainnet stand-in configured): the report's own reasons say why.
+  if (!report.checks.length && report.verdict !== "SAFE") out.unshift({ check: "screening", verdict: report.verdict, reasons: report.reasons });
+  return out;
 }
 
 // --------------------------------------------------------------------------
@@ -148,7 +172,14 @@ export async function evaluate(input: {
   }
 
   const payToMainnet = mainnetScreeningAddress(policy, target.payTo as TestnetAddress);
-  const report = await screen(target, payToMainnet, screeningFromAddress(), new URL(input.url).origin, policy.token_decimals);
+  // Scan Message needs an EVM `from`; it does not apply on Solana (lib/screening.ts).
+  const buyer = onSolana ? undefined : screeningFromAddressOrUndefined();
+  const report = await screen(target, payToMainnet, buyer, new URL(input.url).origin, policy.token_decimals);
+  const screening = summarizeScreening(report);
+  // The server log says which check failed and how, not only the reason code.
+  for (const c of screening) {
+    console.log(`[screening] ${decision_id} ${c.check} ${c.verdict}${c.http_status !== undefined ? ` HTTP ${c.http_status}` : ""} ${c.reasons.join("; ")}${c.error ? ` (error: ${c.error})` : ""}`);
+  }
   l.append(decision_id, "screening_result", {
     task_id: task_id ?? null,
     provider: "intercepta",
@@ -157,6 +188,7 @@ export async function evaluate(input: {
     verdict: report.verdict,
     reasons: report.reasons,
     checks: report.checks,
+    skipped: report.skipped ?? [],
   });
 
   const result = evaluatePolicy(policy, candidate, { verdict: report.verdict, reasons: report.reasons }, ctx);
@@ -165,6 +197,7 @@ export async function evaluate(input: {
     result.decision = "ASK_HUMAN";
     result.reasons.push("ACTION_ASK_HUMAN");
   }
+  for (const s of report.skipped ?? []) result.reasons.push(s.code);
   const notify = task_id !== undefined && actionPolicy === "notify" && result.decision !== "BLOCK";
   if (notify) result.reasons.push("ACTION_NOTIFY");
   const selected = result.selected ? paymentRequired.accepts[options.indexOf(result.selected as (typeof options)[number])] : undefined;
@@ -183,7 +216,7 @@ export async function evaluate(input: {
 
   if (result.decision === "BLOCK" || !selected) {
     l.append(decision_id, "payment_result", { task_id: task_id ?? null, status: "NOT_EXECUTED", run_id, resource: input.url, reason: "BLOCK" });
-    return { decision_id, decision: result.decision, reasons: result.reasons, status: "BLOCKED", task_id };
+    return { decision_id, decision: result.decision, reasons: result.reasons, status: "BLOCKED", task_id, screening };
   }
 
   if (result.decision === "ASK_HUMAN") {
@@ -215,10 +248,19 @@ export async function evaluate(input: {
       status: "AWAITING_HUMAN",
       approval_url: `${input.baseUrl}/approve/${decision_id}`,
       task_id,
+      screening,
     };
   }
 
-  return execute(decision_id);
+  return { ...(await execute(decision_id)), screening };
+}
+
+function screeningFromAddressOrUndefined(): string | undefined {
+  try {
+    return screeningFromAddress();
+  } catch {
+    return undefined; // screen() reports it as UNAVAILABLE with the reason
+  }
 }
 
 // --------------------------------------------------------------------------

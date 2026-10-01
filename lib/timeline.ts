@@ -94,7 +94,10 @@ export function decisionCards(ledger = new Ledger()): { cards: DecisionCard[]; c
               verdict: k.verdict,
               reasons: k.reasons,
               cached: !!k.cache,
-            })),
+            })).concat(
+              // Checks that do not apply (Scan Message on Solana) are shown, not silently absent.
+              ((s.data.skipped as { check: string; code: string }[]) ?? []).map((k) => ({ check: k.check, verdict: "SKIPPED", reasons: [k.code], cached: false })),
+            ),
           }
         : undefined,
       outcome: outcome(events),
