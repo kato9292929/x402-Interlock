@@ -105,6 +105,10 @@ async function buy(name: string, cancelAfterMs: number, query: string): Promise<
   let v = await res.json();
   if (!res.ok) throw new Error(JSON.stringify(v));
   console.log(`[gate] ${v.decision} ${v.reasons.join(", ")} -> ${v.status}`);
+  // Which Intercepta check said what (HTTP status, reason), so a BLOCK is explained right here.
+  for (const c of (v.screening ?? []) as { check: string; verdict: string; http_status?: number; reasons: string[]; error?: string }[]) {
+    console.log(`[gate]   screening ${c.check}: ${c.verdict}${c.http_status !== undefined ? ` (HTTP ${c.http_status})` : ""} ${c.reasons.join("; ")}${c.error ? ` [${c.error}]` : ""}`);
+  }
 
   v = await waitForHuman(v, cancelAfterMs);
 
