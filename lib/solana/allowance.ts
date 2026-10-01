@@ -1,9 +1,9 @@
-import { address, createClient, createSolanaRpc, getBase64Encoder, type KeyPairSigner } from "@solana/kit";
+import { address, createClient, createSolanaRpc, getBase64Encoder, isAddress, type KeyPairSigner } from "@solana/kit";
 import { solanaRpc } from "@solana/kit-plugin-rpc";
 import { signer } from "@solana/kit-plugin-signer";
 import { findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstructionAsync, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { findFixedDelegationPda, findSubscriptionAuthorityPda, getFixedDelegationDecoder, subscriptionsProgram } from "@solana/subscriptions";
-import { gateSigner, ownerSigner, solanaMint, solanaRpcSubscriptionsUrl, solanaRpcUrl } from "./config";
+import { agentSolanaAddress, gateSigner, ownerSigner, sellerSolanaAddress, solanaMint, solanaRpcSubscriptionsUrl, solanaRpcUrl } from "./config";
 
 // A task's budget is a Fixed delegation ("Allowance") in the Solana Subscriptions program
 // (De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44). The owner is the delegator, the gate's key
@@ -68,8 +68,16 @@ export interface SetupReport {
   owner: { address: string; sol_lamports: string; usdc_ata: string; usdc_ata_exists: boolean; usdc_atomic?: string };
   gate: { address: string; sol_lamports: string };
   subscription_authority: { address: string; exists: boolean };
+  agent: { address: string };
+  seller: { address: string; usdc_ata?: string; usdc_ata_exists?: boolean };
+  /** must be fixed before tasks and payments work */
   problems: string[];
+  /** works, but probably not what you meant */
+  warnings: string[];
 }
+
+const NEW_AGENT = "npm run task -- new-address agent --env AGENT_SOLANA_ADDRESS";
+const NEW_SELLER = "npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO";
 
 export class SolanaAllowanceChain implements AllowanceChain {
   constructor(private readonly rpcUrl = solanaRpcUrl()) {}
@@ -151,17 +159,25 @@ export class SolanaAllowanceChain implements AllowanceChain {
     const owner = await ownerSigner();
     const gate = await gateSigner();
     const tokenMint = address(solanaMint());
+    const agent = agentSolanaAddress();
+    const seller = sellerSolanaAddress();
+    const sellerValid = isAddress(seller);
     const [ownerAta] = await findAssociatedTokenPda({ owner: owner.address, mint: tokenMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
     const [sa] = await findSubscriptionAuthorityPda({ user: owner.address, tokenMint });
-    const [ownerSol, gateSol, ataInfo, saInfo] = await Promise.all([
+    const sellerAta = sellerValid
+      ? (await findAssociatedTokenPda({ owner: address(seller), mint: tokenMint, tokenProgram: TOKEN_PROGRAM_ADDRESS }))[0]
+      : undefined;
+    const [ownerSol, gateSol, ataInfo, saInfo, sellerAtaInfo] = await Promise.all([
       rpc.getBalance(owner.address, { commitment: "confirmed" }).send(),
       rpc.getBalance(gate.address, { commitment: "confirmed" }).send(),
       rpc.getAccountInfo(ownerAta, { encoding: "base64", commitment: "confirmed" }).send(),
       rpc.getAccountInfo(sa, { encoding: "base64", commitment: "confirmed" }).send(),
+      sellerAta ? rpc.getAccountInfo(sellerAta, { encoding: "base64", commitment: "confirmed" }).send() : Promise.resolve(undefined),
     ]);
     let usdc: string | undefined;
     if (ataInfo.value) usdc = (await rpc.getTokenAccountBalance(ownerAta, { commitment: "confirmed" }).send()).value.amount;
     const problems: string[] = [];
+    const warnings: string[] = [];
     if (ownerSol.value === 0n) problems.push(`owner ${owner.address} has no devnet SOL (fees and rent). Airdrop at https://faucet.solana.com`);
     if (gateSol.value === 0n) problems.push(`gate ${gate.address} has no devnet SOL (fees for pulls and x402 payments). Airdrop at https://faucet.solana.com`);
     if (!ataInfo.value) {
@@ -173,20 +189,64 @@ export class SolanaAllowanceChain implements AllowanceChain {
     } else if (usdc === "0") {
       problems.push(`owner's USDC token account ${ownerAta} holds 0 USDC. Get devnet USDC from https://faucet.circle.com`);
     }
+
+    // The owner CLI and the agent use different tokens; the task API refuses otherwise.
+    if (!process.env.OWNER_TOKEN) problems.push("OWNER_TOKEN is not set in .env.local (the task CLI sends it). Set any secret that differs from AGENT_TOKEN");
+    else if (process.env.OWNER_TOKEN === process.env.AGENT_TOKEN) problems.push("OWNER_TOKEN equals AGENT_TOKEN; the task API refuses that. Give OWNER_TOKEN its own value");
+
+    // Agent: only used to prove the Allowance is not delegated to it. Needs no SOL or USDC.
+    if (!agent) problems.push(`AGENT_SOLANA_ADDRESS is not set; opening a task refuses without it. Run: ${NEW_AGENT}`);
+    else if (!isAddress(agent)) problems.push(`AGENT_SOLANA_ADDRESS (${agent}) is not a Solana address. Clear it and run: ${NEW_AGENT}`);
+    else if (agent === gate.address) problems.push("AGENT_SOLANA_ADDRESS equals the gate key; opening a task refuses to delegate to the agent. Use a separate agent address");
+    else if (agent === owner.address) warnings.push("AGENT_SOLANA_ADDRESS equals the owner; the agent should not be the owner of the funds");
+
+    // Seller: the x402 payTo. Payments transfer into its USDC token account, which must exist.
+    if (!seller) problems.push(`SELLER_SOLANA_PAY_TO is not set; Solana purchases have no payTo. Run: ${NEW_SELLER}`);
+    else if (!sellerValid) problems.push(`SELLER_SOLANA_PAY_TO (${seller}) is not a Solana address. Clear it and run: ${NEW_SELLER}`);
+    else {
+      if (!sellerAtaInfo?.value) {
+        problems.push(`seller ${seller} has no USDC token account (expected ${sellerAta}); payments to it would fail. Run: npm run task -- seller-account`);
+      }
+      if (seller === gate.address || seller === owner.address) {
+        warnings.push(`SELLER_SOLANA_PAY_TO is the ${seller === gate.address ? "gate" : "owner"}'s address; payments would go back to ourselves`);
+      }
+      if (seller === agent) warnings.push("SELLER_SOLANA_PAY_TO equals AGENT_SOLANA_ADDRESS; the agent would be paying itself (see README, Colosseum section)");
+    }
+
     return {
       rpc: this.rpcUrl,
       mint: tokenMint,
       owner: { address: owner.address, sol_lamports: ownerSol.value.toString(), usdc_ata: ownerAta, usdc_ata_exists: !!ataInfo.value, usdc_atomic: usdc },
       gate: { address: gate.address, sol_lamports: gateSol.value.toString() },
       subscription_authority: { address: sa, exists: !!saInfo.value },
+      agent: { address: agent },
+      seller: { address: seller, usdc_ata: sellerAta, usdc_ata_exists: sellerAta ? !!sellerAtaInfo?.value : undefined },
       problems,
+      warnings,
     };
+  }
+
+  /**
+   * Create the seller's USDC token account, paid by the owner (the seller needs no SOL and does
+   * not sign). Idempotent: does nothing if it exists.
+   */
+  async createSellerTokenAccount() {
+    const seller = sellerSolanaAddress();
+    if (!isAddress(seller)) throw new SolanaSetupError(`SELLER_SOLANA_PAY_TO is not set to a Solana address. Run: ${NEW_SELLER}`);
+    const tokenMint = address(solanaMint());
+    const [ata] = await findAssociatedTokenPda({ owner: address(seller), mint: tokenMint, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+    const existing = await createSolanaRpc(this.rpcUrl).getAccountInfo(ata, { encoding: "base64", commitment: "confirmed" }).send();
+    if (existing.value) return { already_exists: true, seller, usdc_ata: ata };
+    const owner = await ownerSigner();
+    const ix = await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: owner, owner: address(seller), mint: tokenMint });
+    const { context } = await clientFor(this.rpcUrl, owner).sendTransaction([ix]);
+    return { signature: context.signature, seller, usdc_ata: ata };
   }
 
   /** One-time owner setup: the per-mint SubscriptionAuthority must exist before any Allowance. */
   async initOwnerAuthority() {
     const report = await this.preflight();
-    const ownerProblems = report.problems.filter((p) => !p.startsWith("gate "));
+    const ownerProblems = report.problems.filter((p) => p.startsWith("owner"));
     if (ownerProblems.some((p) => /no devnet SOL|no USDC token account/.test(p))) {
       throw new SolanaSetupError(`cannot set up the SubscriptionAuthority yet:\n  - ${ownerProblems.join("\n  - ")}`);
     }

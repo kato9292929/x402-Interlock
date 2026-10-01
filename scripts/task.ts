@@ -6,9 +6,15 @@
 //   npm run task -- close task_...          # revokes the Allowance on chain (irreversible)
 //   npm run task -- preflight               # check SOL, the owner's USDC token account and the authority (direct, read-only)
 //   npm run task -- init-authority          # one-time: owner's SubscriptionAuthority for USDC (direct, needs OWNER_SOLANA_PRIVATE_KEY)
+//   npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO   # new keypair in keys/seller.json; address into .env.local
+//   npm run task -- seller-account          # create the seller's USDC token account, paid by the owner (direct)
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SolanaAllowanceChain, SolanaSetupError } from "../lib/solana/allowance";
 import { formatSolanaError } from "../lib/solana/errors";
+import { generateSolanaKeypair, setEnvValue } from "../lib/solana/setup";
+
+const ENV_FILE = ".env.local";
 
 const BASE = process.env.INTERLOCK_URL ?? "http://localhost:3000";
 const headers = { authorization: `Bearer ${process.env.OWNER_TOKEN ?? ""}`, "content-type": "application/json" };
@@ -56,15 +62,44 @@ async function main() {
     const r = await new SolanaAllowanceChain().preflight();
     console.log(JSON.stringify(r, null, 2));
     console.log(r.problems.length ? `\n${r.problems.length} problem(s):\n  - ${r.problems.join("\n  - ")}` : "\nall set");
+    if (r.warnings.length) console.log(`\nwarning(s):\n  - ${r.warnings.join("\n  - ")}`);
     if (!r.subscription_authority.exists) console.log("SubscriptionAuthority not set up yet: run `npm run task -- init-authority`");
   } else if (cmd === "init-authority") {
     const r = await new SolanaAllowanceChain().initOwnerAuthority();
     console.log(JSON.stringify(r, null, 2));
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready set up; nothing to do");
+  } else if (cmd === "new-address") {
+    await newAddress(process.argv[3], arg("--env"));
+  } else if (cmd === "seller-account") {
+    const r = await new SolanaAllowanceChain().createSellerTokenAccount();
+    console.log(JSON.stringify(r, null, 2));
+    if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
+    else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority");
+    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|seller-account");
   }
+}
+
+// A demo address (agent or seller). The secret key goes to keys/<name>.json (git-ignored, in
+// solana-keygen's format) so the funds stay recoverable; only the public address goes into .env.local.
+async function newAddress(name: string | undefined, envName: string | undefined) {
+  if (!name || !/^[a-z0-9-]+$/.test(name)) throw new SolanaSetupError("usage: npm run task -- new-address <name> [--env VAR]   (name: a-z, 0-9, -)");
+  const file = `keys/${name}.json`;
+  if (existsSync(file)) throw new SolanaSetupError(`${file} already exists; not overwriting. Use another name or delete it first`);
+  const envText = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, "utf8") : "";
+  const kp = await generateSolanaKeypair();
+  // Check .env.local first, so a refusal leaves no orphan key file behind.
+  let nextEnv: string | undefined;
+  try {
+    nextEnv = envName ? setEnvValue(envText, envName, kp.address) : undefined;
+  } catch (e) {
+    throw new SolanaSetupError((e as Error).message);
+  }
+  mkdirSync("keys", { recursive: true, mode: 0o700 });
+  writeFileSync(file, JSON.stringify(Array.from(kp.secretKey)) + "\n", { mode: 0o600 });
+  if (nextEnv !== undefined) writeFileSync(ENV_FILE, nextEnv);
+  console.log(JSON.stringify({ name, address: kp.address, keypair_file: file, env: envName ? `${envName} written to ${ENV_FILE}` : undefined }, null, 2));
 }
 
 main().catch((e) => {

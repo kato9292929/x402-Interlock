@@ -43,3 +43,6 @@ next-env.d.ts
 # x402 Interlock runtime data
 /data/*.jsonl
 !.env.example
+
+# demo keypairs made by `npm run task -- new-address`
+/keys/

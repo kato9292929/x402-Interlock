@@ -31,3 +31,6 @@ export const ownerSigner = () => keypairFromEnv("OWNER_SOLANA_PRIVATE_KEY");
 
 /** The agent's public key, so issuance can refuse to delegate to it. */
 export const agentSolanaAddress = () => process.env.AGENT_SOLANA_ADDRESS ?? "";
+
+/** The demo seller's public key: the x402 payTo on Solana. */
+export const sellerSolanaAddress = () => process.env.SELLER_SOLANA_PAY_TO ?? "";
