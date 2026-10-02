@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
-import { view } from "@/lib/gate";
+import { heldMessage, view } from "@/lib/gate";
 import { loadApprovalRequest } from "@/lib/world";
 import ApprovalClient from "./approval-client";
 
@@ -14,9 +14,39 @@ export default async function ApprovePage({ params }: PageProps<"/approve/[id]">
   const v = view(id);
   const s = req.summary;
   const isAction = s.network === "interlock:action";
+  const msg = heldMessage(id);
   return (
     <>
-      {isAction ? (
+      {msg ? (
+        <>
+          <h1 style={{ fontSize: 20 }}>Send this message?</h1>
+          <section className="card">
+            <p className="muted" style={{ marginTop: 0 }}>
+              The agent asked the gate to send this. The gate found the items below in it. If you approve, the gate sends
+              exactly this text to this recipient; any change is a new request.
+            </p>
+            <dl>
+              <dt>to</dt><dd><code>{msg.to}</code> <span className="muted">via {msg.channel}</span></dd>
+              <dt>message</dt><dd><pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{msg.body}</pre></dd>
+              <dt>found</dt>
+              <dd>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {msg.detected.map((d) => (
+                    <li key={d.field}>
+                      <strong>{d.field}</strong> <span className="muted">({d.source === "protected" ? "your registered data" : "looks like personal data"}: {d.parts.join(", ")})</span>
+                    </li>
+                  ))}
+                  {!msg.detected.length && <li className="muted">nothing (asked because of the agent&apos;s declared type)</li>}
+                </ul>
+              </dd>
+              <dt>bound to</dt><dd><code>sha256 {s.asset.slice(0, 16)}…</code> <span className="muted">channel + recipient + text</span></dd>
+              <dt>task</dt><dd><code>{v.task_id ?? "-"}</code></dd>
+              <dt>why asked</dt><dd><code>{v.reasons.join(", ")}</code></dd>
+              <dt>expires</dt><dd>{new Date(req.rp_context.expires_at * 1000).toLocaleTimeString()}</dd>
+            </dl>
+          </section>
+        </>
+      ) : isAction ? (
         <>
           <h1 style={{ fontSize: 20 }}>Allow this action?</h1>
           <section className="card">

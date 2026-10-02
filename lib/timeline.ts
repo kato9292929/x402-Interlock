@@ -23,6 +23,17 @@ function actionOutcome(events: LedgerEvent[]): { label: string; cls: string } {
   const judged = events.find((e) => e.event_type === "action_judged" && e.data.phase === "judged")!;
   const human = events.filter((e) => e.event_type === "action_judged" && e.data.phase === "human").at(-1);
   const decision = String(judged.data.decision);
+  if (judged.data.kind === "send") {
+    const sent = events.find((e) => e.event_type === "action_sent");
+    if (sent?.data.status === "SENT") return { label: "Sent by the gate", cls: "PAID" };
+    if (sent) {
+      const r = String(sent.data.reason);
+      if (r === "DENY") return { label: "Not sent: denied by policy (no approval can override)", cls: "BLOCKED" };
+      return { label: `Not sent: ${r.startsWith("HUMAN_") ? r.replace("HUMAN_", "owner ").toLowerCase() : r}`, cls: "BLOCKED" };
+    }
+    if (decision === "BLOCK") return { label: `Not sent: ${(judged.data.reasons as string[]).join(", ")}`, cls: "BLOCKED" };
+    return { label: "Held: waiting for the owner's World ID approval", cls: "AWAITING_HUMAN" };
+  }
   if (decision === "DENY") return { label: "Stopped: denied by policy (no approval can override)", cls: "BLOCKED" };
   if (decision === "BLOCK") return { label: `Stopped: ${(judged.data.reasons as string[]).join(", ")}`, cls: "BLOCKED" };
   if (decision === "ALLOW") return judged.data.notify ? { label: "Allowed (owner notified)", cls: "PAID" } : { label: "Allowed", cls: "PAID" };
@@ -56,6 +67,22 @@ export function decisionCards(ledger = new Ledger()): { cards: DecisionCard[]; c
   );
   const cards = entries.map(([decision_id, events]): DecisionCard => {
     const judged = events.find((e) => e.event_type === "action_judged" && e.data.phase === "judged");
+    if (judged?.data.kind === "send") {
+      const found = ((judged.data.detected as { field: string; parts: string[] }[]) ?? []).map((d) => `${d.field} (${d.parts.join(", ")})`);
+      return {
+        decision_id,
+        started_at: events[0].occurred_at,
+        resource: `send via ${judged.data.channel}: ${judged.data.action_type ?? "nothing sensitive found"} (policy ${judged.data.action_policy})`,
+        purpose: found.length ? `found: ${found.join("; ")}` : `${judged.data.body_length} characters, nothing found`,
+        amount: "none (no money moves)",
+        decision: String(judged.data.decision),
+        reasons: (judged.data.reasons as string[]) ?? [],
+        outcome: actionOutcome(events),
+        task_id: (judged.data.task_id as string) ?? undefined,
+        action_type: String(judged.data.action_type ?? "send"),
+        events,
+      };
+    }
     if (judged) {
       const summary = judged.data.payload_summary as { description?: string; fields?: string[] };
       return {

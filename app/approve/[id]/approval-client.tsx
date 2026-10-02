@@ -24,6 +24,7 @@ const ACTION_LABEL: Record<string, string> = {
   HUMAN_REJECTED: "Rejected: the agent will not do it",
   HUMAN_EXPIRED: "Expired: the agent will not do it",
   HUMAN_CANCELLED: "Cancelled: the agent will not do it",
+  SENT: "Approved: the gate sent this exact message",
 };
 
 const LABEL: Record<string, string> = {
