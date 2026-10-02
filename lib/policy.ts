@@ -32,7 +32,12 @@ export type ReasonCode =
   | "ACTION_ALLOW"
   | "ACTION_NOTIFY"
   | "ACTION_ASK_HUMAN"
-  | "ACTION_DENIED";
+  | "ACTION_DENIED"
+  // the gate's own reading of an outgoing message (lib/protect.ts)
+  | "CONTENT_PROTECTED_MATCH"
+  | "CONTENT_PATTERN_MATCH"
+  | "CONTENT_NONE_DETECTED"
+  | "DECLARED_TYPE";
 
 export interface Policy {
   token_decimals: number;

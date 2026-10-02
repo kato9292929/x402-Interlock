@@ -16,7 +16,9 @@ import {
   type TestnetAddress,
 } from "./policy";
 import { createHash } from "node:crypto";
-import { isActionType, loadActionPolicies, type ActionType } from "./actions";
+import { isActionType, loadActionPolicies, type ActionPolicy, type ActionType } from "./actions";
+import { deliver, isChannel, type Channel } from "./inbox";
+import { detectDisclosure, type Detection } from "./protect";
 import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
 import { isSolanaNetwork } from "./solana/config";
@@ -39,7 +41,8 @@ export type Status =
   | "AWAITING_HUMAN"
   | "HUMAN_REJECTED"
   | "HUMAN_EXPIRED"
-  | "HUMAN_CANCELLED";
+  | "HUMAN_CANCELLED"
+  | "SENT";
 
 export interface GateView {
   decision_id: string;
@@ -51,6 +54,9 @@ export interface GateView {
   action_type?: ActionType;
   notify?: boolean;
   result?: { http_status: number; body: unknown; settlement?: unknown };
+  /** For a message sent through the gate: what the gate found in it (no matched values). */
+  detected?: Detection[];
+  message_id?: string;
   /** One line per screening check, so a BLOCK says which check failed and how (no secrets in it). */
   screening?: ScreeningSummary[];
 }
@@ -278,7 +284,19 @@ type Pending =
       result: GateResult;
       selected?: PaymentRequirements;
     }
-  | { kind: "action"; task_id?: string; action_type: ActionType; payload_sha256: string; run_id?: undefined; url?: undefined };
+  | { kind: "action"; task_id?: string; action_type: ActionType; payload_sha256: string; run_id?: undefined; url?: undefined }
+  | {
+      kind: "send";
+      task_id?: string;
+      action_type: ActionType | null;
+      channel: Channel;
+      to: string;
+      body: string;
+      message_sha256: string;
+      detected: Detection[];
+      run_id?: undefined;
+      url?: undefined;
+    };
 const pendingFile = (id: string) => path.join(DATA(), "pending", `${id}.json`);
 const resultFile = (id: string) => path.join(DATA(), "results", `${id}.json`);
 
@@ -298,7 +316,7 @@ function loadPending(id: string): Pending | null {
 async function execute(decision_id: string): Promise<GateView> {
   const l = ledger();
   const p = loadPending(decision_id);
-  if (!p || p.kind === "action" || !p.selected) throw new Error("no pending payment");
+  if (!p || p.kind === "action" || p.kind === "send" || !p.selected) throw new Error("no pending payment");
   if (paidOrAttempted(l.byDecision(decision_id))) return view(decision_id);
   const task_id = p.task_id ?? null;
 
@@ -380,8 +398,9 @@ function closeHuman(decision_id: string, status: "REJECTED" | "EXPIRED" | "CANCE
   const l = ledger();
   const p = loadPending(decision_id);
   l.append(decision_id, "human_verification", { task_id: p?.task_id ?? null, status, ...detail });
-  if (p?.kind === "action") {
+  if (p?.kind === "action" || p?.kind === "send") {
     l.append(decision_id, "action_judged", { task_id: p.task_id ?? null, phase: "human", action_type: p.action_type, outcome: `HUMAN_${status}` });
+    if (p.kind === "send") l.append(decision_id, "action_sent", { task_id: p.task_id ?? null, status: "NOT_SENT", reason: `HUMAN_${status}`, channel: p.channel });
   } else {
     l.append(decision_id, "payment_result", {
       task_id: p?.task_id ?? null,
@@ -433,6 +452,12 @@ export async function approve(decision_id: string, result: IDKitResult): Promise
     nullifier: outcome.nullifier,
     world_response: outcome.world_response ?? null,
   });
+  // A message the gate holds: send exactly the bytes the owner approved.
+  if (p?.kind === "send") {
+    ledger().append(decision_id, "action_judged", { task_id: p.task_id ?? null, phase: "human", action_type: p.action_type, outcome: "APPROVED" });
+    sendHeld(decision_id, p, req.summary.asset);
+    return { outcome, view: view(decision_id) };
+  }
   // A non-payment action is only judged here; the agent carries it out itself.
   if (p?.kind === "action") {
     ledger().append(decision_id, "action_judged", { task_id: p.task_id ?? null, phase: "human", action_type: p.action_type, outcome: "APPROVED" });
@@ -469,7 +494,9 @@ export function view(decision_id: string, baseUrl?: string): GateView {
   const humanStatus: Record<string, Status> = { REJECTED: "HUMAN_REJECTED", EXPIRED: "HUMAN_EXPIRED", CANCELLED: "HUMAN_CANCELLED" };
   const reasons = [...(d.data.reasons as ReasonCode[])];
   let status: Status;
-  if (action) {
+  const sent = events.find((e) => e.event_type === "action_sent" && e.data.status === "SENT");
+  if (sent) status = "SENT";
+  else if (action) {
     if (decision === "ALLOW") status = "ALLOWED";
     else if (decision === "DENY") status = "DENIED";
     else if (decision === "BLOCK") status = "BLOCKED";
@@ -495,6 +522,8 @@ export function view(decision_id: string, baseUrl?: string): GateView {
     action_type: (d.data.action_type as ActionType | undefined) ?? undefined,
     notify: d.data.notify === true || undefined,
     result: res,
+    detected: (action?.data.detected as Detection[] | undefined) ?? undefined,
+    message_id: (sent?.data.message_id as string | undefined) ?? undefined,
   };
 }
 
@@ -578,4 +607,158 @@ export async function evaluateAction(input: {
     });
   }
   return view(decision_id, input.baseUrl);
+}
+
+// --------------------------------------------------------------------------
+// messages sent through the gate (phase 1 of docs/PROPOSAL-action-executor.md)
+// --------------------------------------------------------------------------
+
+const STRICTNESS: ActionPolicy[] = ["allow", "notify", "ask_human", "deny"];
+
+/** The message as bound to an approval: channel, recipient and body, exactly. */
+export function messageSha256(channel: string, to: string, body: string): string {
+  return createHash("sha256").update(JSON.stringify([channel, to, body])).digest("hex");
+}
+
+/**
+ * The agent asks the gate to send a message; it holds no credential for the channel itself.
+ * The gate reads the text (the owner's registered data, then patterns for personal data),
+ * takes the strictest policy of every type it found plus the type the agent declared, and
+ * sends only when that policy allows it or the owner approves this exact message.
+ */
+export async function sendMessage(input: {
+  task_id?: string;
+  channel: string;
+  to: string;
+  body: string;
+  declared_type?: string;
+  baseUrl: string;
+}): Promise<GateView> {
+  if (!isChannel(input.channel)) throw new Error(`unknown channel ${input.channel}`);
+  if (typeof input.to !== "string" || !input.to.trim()) throw new Error("to is required");
+  if (typeof input.body !== "string" || !input.body.trim()) throw new Error("body is required");
+  if (input.body.length > 4000) throw new Error("body is longer than 4000 characters");
+  if (input.declared_type !== undefined && (!isActionType(input.declared_type) || input.declared_type === "pay")) {
+    throw new Error("declared_type must be commit, disclose or impersonate");
+  }
+  const channel = input.channel;
+  const { to, body, task_id } = input;
+  const decision_id = randomUUID();
+  const message_sha256 = messageSha256(channel, to, body);
+  const policies = loadActionPolicies();
+
+  const detected = detectDisclosure(body);
+  const types = new Set<ActionType>(detected.map((d) => d.type));
+  if (input.declared_type) types.add(input.declared_type as ActionType);
+  // Strictest policy wins; the agent's declaration can only add to what the gate found.
+  const ordered = [...types].sort((a, b) => STRICTNESS.indexOf(policies[b]) - STRICTNESS.indexOf(policies[a]));
+  const action_type = ordered[0] ?? null;
+  const policy: ActionPolicy = action_type ? policies[action_type] : "allow";
+
+  const contentReasons: ReasonCode[] = [];
+  if (detected.some((d) => d.source === "protected")) contentReasons.push("CONTENT_PROTECTED_MATCH");
+  if (detected.some((d) => d.source === "pattern")) contentReasons.push("CONTENT_PATTERN_MATCH");
+  if (input.declared_type) contentReasons.push("DECLARED_TYPE");
+  if (!detected.length) contentReasons.push("CONTENT_NONE_DETECTED");
+
+  let decision: Decision;
+  let reasons: ReasonCode[];
+  const t = checkTask(task_id);
+  if (t.reason) {
+    decision = "BLOCK";
+    reasons = [t.reason];
+  } else if (policy === "deny") {
+    decision = "DENY";
+    reasons = ["ACTION_DENIED", ...contentReasons];
+  } else if (policy === "ask_human") {
+    decision = "ASK_HUMAN";
+    reasons = ["ACTION_ASK_HUMAN", ...contentReasons];
+  } else {
+    decision = "ALLOW";
+    reasons = [policy === "notify" ? "ACTION_NOTIFY" : "ACTION_ALLOW", ...contentReasons];
+  }
+  const held = { kind: "send" as const, task_id, action_type, channel, to, body, message_sha256, detected };
+  // Prepare the approval before recording the decision, so a World ID setup error fails the
+  // request instead of leaving a held message that can never be approved.
+  // The World ID signal binds the proof to this exact channel, recipient and body.
+  const req =
+    decision === "ASK_HUMAN"
+      ? createApprovalRequest(decision_id, {
+          payTo: `send:${channel}`,
+          amount: "0",
+          amount_display: "no payment",
+          asset: message_sha256,
+          network: "interlock:action",
+          resource: ordered.join(", ") || "send",
+          purpose: `send a message to ${to}`,
+        })
+      : undefined;
+  const notify = decision === "ALLOW" && policy === "notify";
+  // The ledger gets hashes and what was found, never the body, the recipient or a matched value.
+  ledger().append(decision_id, "action_judged", {
+    phase: "judged",
+    kind: "send",
+    task_id: task_id ?? null,
+    channel,
+    to_sha256: createHash("sha256").update(to).digest("hex"),
+    message_sha256,
+    body_length: body.length,
+    declared_type: input.declared_type ?? null,
+    types: ordered,
+    action_type,
+    action_policy: policy,
+    decision,
+    reasons,
+    notify,
+    detected,
+  });
+
+  if (decision === "ALLOW") {
+    sendHeld(decision_id, held, message_sha256);
+  } else if (req) {
+    savePending(decision_id, held);
+    ledger().append(decision_id, "human_verification", {
+      task_id: task_id ?? null,
+      status: "REQUESTED",
+      provider: "world_id",
+      credential: "proof_of_human",
+      action: req.action,
+      signal: req.signal,
+      environment: req.environment,
+      require_user_presence: req.require_user_presence,
+      rp_nonce: req.rp_context.nonce,
+      expires_at: new Date(req.rp_context.expires_at * 1000).toISOString(),
+    });
+  } else {
+    ledger().append(decision_id, "action_sent", { task_id: task_id ?? null, status: "NOT_SENT", reason: decision, channel });
+  }
+  return view(decision_id, input.baseUrl);
+}
+
+/**
+ * Deliver a held message, but only if it is still the message that was judged (and approved):
+ * the hash bound to the decision must match what is about to go out. Sent at most once.
+ */
+function sendHeld(decision_id: string, p: Extract<Pending, { kind: "send" }>, boundSha256: string) {
+  const l = ledger();
+  if (l.byDecision(decision_id).some((e) => e.event_type === "action_sent")) return;
+  const now = messageSha256(p.channel, p.to, p.body);
+  if (now !== boundSha256 || now !== p.message_sha256) {
+    l.append(decision_id, "action_sent", { task_id: p.task_id ?? null, status: "NOT_SENT", reason: "MESSAGE_CHANGED", channel: p.channel });
+    return;
+  }
+  // The task may have been closed while the owner was deciding.
+  const t = checkTask(p.task_id);
+  if (t.reason) {
+    l.append(decision_id, "action_sent", { task_id: p.task_id ?? null, status: "NOT_SENT", reason: t.reason, channel: p.channel });
+    return;
+  }
+  const msg = deliver(decision_id, p.channel, p.to, p.body);
+  l.append(decision_id, "action_sent", { task_id: p.task_id ?? null, status: "SENT", channel: p.channel, message_id: msg.message_id, message_sha256: now });
+}
+
+/** For the approval page only: the held message, so the owner sees exactly what would be sent. */
+export function heldMessage(decision_id: string): { channel: string; to: string; body: string; detected: Detection[] } | null {
+  const p = loadPending(decision_id);
+  return p?.kind === "send" ? { channel: p.channel, to: p.to, body: p.body, detected: p.detected } : null;
 }

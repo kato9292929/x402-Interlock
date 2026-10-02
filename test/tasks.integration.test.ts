@@ -501,11 +501,115 @@ test("actions on a closed task are blocked", async () => {
 // ledger
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// messages sent through the gate (deterministic content check)
+// ---------------------------------------------------------------------------
+
+const HOME = "〒150-0001 東京都渋谷区神宮前1丁目2番3号";
+const MUSE = "Thanks! The owner will meet you at 神宮前１－２－３ (〒150-0001) on Saturday.";
+const send = async (task_id: string | undefined, body: string, declared_type?: string) =>
+  (await gate()).sendMessage({ task_id, channel: "venue-inbox", to: "venue@example.com", body, declared_type, baseUrl: "http://x" });
+const inboxBodies = async () => (await import("../lib/inbox")).readInbox().map((m) => m.body);
+let protectedRegistered = false;
+async function registerHome() {
+  if (protectedRegistered) return;
+  const { addProtected } = await import("../lib/protect");
+  addProtected("address", "home", HOME);
+  addProtected("phone", "mobile", "090-1234-5678");
+  protectedRegistered = true;
+}
+
+test("Muse: the agent declares nothing, the gate finds the owner's address and holds the message; rejected -> never delivered", async () => {
+  await registerHome();
+  const t = await openTask("1.00");
+  const v = await send(t.task_id, MUSE);
+  assert.equal(v.status, "AWAITING_HUMAN", JSON.stringify(v));
+  assert.equal(v.decision, "ASK_HUMAN");
+  assert.ok(v.reasons.includes("CONTENT_PROTECTED_MATCH"));
+  const home = v.detected?.find((d) => d.field === "owner.home");
+  assert.deepEqual(home?.parts, ["postal_code", "street_number", "locality"]);
+  assert.ok(!(await inboxBodies()).includes(MUSE));
+  const g = await gate();
+  assert.equal(g.reject(v.decision_id, "owner_clicked_reject").status, "HUMAN_REJECTED");
+  assert.ok(!(await inboxBodies()).includes(MUSE));
+  const sent = new Ledger().byDecision(v.decision_id).find((e) => e.event_type === "action_sent");
+  assert.equal(sent?.data.status, "NOT_SENT");
+  assert.equal(sent?.data.reason, "HUMAN_REJECTED");
+});
+
+test("approved with World ID -> the gate delivers exactly that text; an edited text afterwards is a new decision", async () => {
+  await registerHome();
+  const t = await openTask("1.00");
+  const body = "See you at 神宮前1-2-3, ring twice.";
+  const v = await send(t.task_id, body);
+  assert.equal(v.status, "AWAITING_HUMAN");
+  const { view } = await (await gate()).approve(v.decision_id, proofFor(v.decision_id));
+  assert.equal(view.status, "SENT");
+  assert.ok(view.message_id);
+  assert.ok((await inboxBodies()).includes(body));
+  // The approval covers that exact message only.
+  const edited = await send(t.task_id, body + " Door code 4421.");
+  assert.notEqual(edited.decision_id, v.decision_id);
+  assert.equal(edited.status, "AWAITING_HUMAN");
+  assert.ok(!(await inboxBodies()).includes(body + " Door code 4421."));
+  const again = await send(t.task_id, body);
+  assert.equal(again.status, "AWAITING_HUMAN"); // resending the approved text needs a new approval too
+});
+
+test("a held message changed before approval is not sent (MESSAGE_CHANGED)", async () => {
+  await registerHome();
+  const t = await openTask("1.00");
+  const v = await send(t.task_id, "My number is 090 1234 5678");
+  assert.ok(v.detected?.some((d) => d.field === "owner.mobile"));
+  const f = path.join(process.env.DATA_DIR!, "pending", `${v.decision_id}.json`);
+  const p = JSON.parse(readFileSync(f, "utf8"));
+  writeFileSync(f, JSON.stringify({ ...p, body: "My number is 080 0000 0000" }));
+  const { view } = await (await gate()).approve(v.decision_id, proofFor(v.decision_id));
+  assert.notEqual(view.status, "SENT");
+  const sent = new Ledger().byDecision(v.decision_id).find((e) => e.event_type === "action_sent");
+  assert.equal(sent?.data.reason, "MESSAGE_CHANGED");
+  assert.ok(!(await inboxBodies()).some((b) => b.includes("080 0000 0000")));
+});
+
+test("nothing found -> sent automatically; unregistered phone -> held (pattern); declared types only add", async () => {
+  await registerHome();
+  const t = await openTask("1.00");
+  const clean = await send(t.task_id, "Thanks, Saturday at 18:00 works. Price 1-2 USDC is fine.");
+  assert.equal(clean.status, "SENT", JSON.stringify(clean));
+  assert.ok(clean.reasons.includes("CONTENT_NONE_DETECTED"));
+  const pattern = await send(t.task_id, "Call the manager at 03-1111-2222");
+  assert.equal(pattern.status, "AWAITING_HUMAN");
+  assert.ok(pattern.reasons.includes("CONTENT_PATTERN_MATCH"));
+  const promise = await send(t.task_id, "Fine.", "commit");
+  assert.equal(promise.status, "AWAITING_HUMAN");
+  assert.ok(promise.reasons.includes("DECLARED_TYPE"));
+  const asOwner = await send(t.task_id, "Hello from the owner", "impersonate");
+  assert.equal(asOwner.status, "DENIED");
+  assert.ok(!(await inboxBodies()).includes("Hello from the owner"));
+  // Declaring "commit" on a message with the address does not loosen the disclose policy.
+  const mixed = await send(t.task_id, MUSE, "commit");
+  assert.equal(mixed.status, "AWAITING_HUMAN");
+  assert.ok(mixed.reasons.includes("CONTENT_PROTECTED_MATCH"));
+});
+
+test("send on a closed task is blocked and not delivered; /api/act/send needs the agent token", async () => {
+  const t = await openTask("1.00");
+  await (await tasks()).closeTask(t.task_id);
+  const v = await send(t.task_id, "closed task message");
+  assert.equal(v.status, "BLOCKED");
+  assert.ok(v.reasons.includes("TASK_NOT_ACTIVE"));
+  assert.ok(!(await inboxBodies()).includes("closed task message"));
+  const { POST } = await import("../app/api/act/send/route");
+  const body = JSON.stringify({ task_id: t.task_id, channel: "venue-inbox", to: "v", body: "x" });
+  assert.equal((await POST(new NextRequest("http://x/api/act/send", { method: "POST", body, headers: { authorization: "Bearer owner-token-secret" } }))).status, 401);
+  assert.equal((await POST(new NextRequest("http://x/api/act/send", { method: "POST", body: JSON.stringify({ channel: "email", to: "v", body: "x" }), headers: { authorization: "Bearer agent-token-secret" } }))).status, 400);
+});
+
 test("ledger: new events are in the hash chain, task_id on payment events, no secrets or raw payloads", async () => {
   const l = new Ledger();
   assert.equal(l.verify(), -1);
   const all = l.readAll();
-  for (const type of ["task_opened", "task_closed", "action_judged", "allowance_checked"]) {
+  for (const type of ["task_opened", "task_closed", "action_judged", "action_sent", "allowance_checked"]) {
     assert.ok(all.some((e) => e.event_type === type), type);
   }
   const taskIds = new Set(all.filter((e) => e.event_type === "task_opened").map((e) => e.decision_id));
@@ -522,6 +626,11 @@ test("ledger: new events are in the hash chain, task_id on payment events, no se
     "intercepta-key-secret",
     "1-2-3 Jingumae",
     "Hi, it's me",
+    "神宮前",
+    "150-0001",
+    "1234-5678",
+    "venue@example.com",
+    "ring twice",
   ]) {
     assert.ok(!raw.includes(secret), `ledger contains ${secret}`);
   }

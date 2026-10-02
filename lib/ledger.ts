@@ -11,6 +11,7 @@ export type LedgerEventType =
   | "task_opened"
   | "task_closed"
   | "action_judged"
+  | "action_sent"
   | "allowance_checked";
 
 export interface LedgerEvent {
