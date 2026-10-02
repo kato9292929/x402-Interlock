@@ -8,11 +8,15 @@
 //   npm run task -- init-authority          # one-time: owner's SubscriptionAuthority for USDC (direct, needs OWNER_SOLANA_PRIVATE_KEY)
 //   npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO   # new keypair in keys/seller.json; address into .env.local
 //   npm run task -- new-token OWNER_TOKEN   # random token into .env.local; never overwrites, never equal to AGENT_TOKEN
+//   npm run task -- protect add address home      # register the owner's data (prompts for the value; server-side only)
+//   npm run task -- protect list | protect remove home
 //   npm run task -- seller-account          # create the seller's USDC token account, paid by the owner (direct)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SolanaAllowanceChain, SolanaSetupError } from "../lib/solana/allowance";
 import { formatSolanaError } from "../lib/solana/errors";
+import { addProtected, maskedProtected, removeProtected } from "../lib/protect";
+import { createInterface } from "node:readline/promises";
 import { envValue, generateSolanaKeypair, setEnvValue, setNewToken } from "../lib/solana/setup";
 
 const ENV_FILE = ".env.local";
@@ -72,6 +76,8 @@ async function main() {
     else console.log("\nalready set up; nothing to do");
   } else if (cmd === "new-address") {
     await newAddress(process.argv[3], arg("--env"));
+  } else if (cmd === "protect") {
+    await protect(process.argv[3], process.argv[4], process.argv[5], process.argv[6]);
   } else if (cmd === "new-token") {
     newToken(process.argv[3]);
   } else if (cmd === "seller-account") {
@@ -80,7 +86,34 @@ async function main() {
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|seller-account");
+    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|protect|seller-account");
+  }
+}
+
+// The owner's protected data, stored in data/protected.json on this machine only. The value is
+// asked for interactively when not given, so it does not end up in the shell history.
+async function protect(sub: string | undefined, kind: string | undefined, label: string | undefined, value: string | undefined) {
+  if (sub === "list") {
+    console.log(JSON.stringify(maskedProtected(), null, 2));
+  } else if (sub === "remove") {
+    if (!kind) throw new SolanaSetupError("usage: npm run task -- protect remove <label>");
+    console.log(removeProtected(kind) ? `removed ${kind}` : `no entry named ${kind}`);
+  } else if (sub === "add") {
+    if (!kind || !label) throw new SolanaSetupError("usage: npm run task -- protect add <address|phone|email|text> <label> [value]");
+    let v = value;
+    if (v === undefined) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      v = await rl.question(`${kind} for "${label}": `);
+      rl.close();
+    }
+    try {
+      const e = addProtected(kind, label, v);
+      console.log(JSON.stringify({ registered: `owner.${e.label}`, kind: e.kind, stored_in: "data/protected.json (this machine only; never in the ledger)" }, null, 2));
+    } catch (e) {
+      throw new SolanaSetupError((e as Error).message);
+    }
+  } else {
+    throw new SolanaSetupError("usage: npm run task -- protect add|list|remove");
   }
 }
 

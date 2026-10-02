@@ -13,6 +13,7 @@
 //   npm run agent -- act disclose --task task_... --payload '{"description":"share home address","address":"..."}'
 //   npm run agent -- act commit --task task_... --payload '{"description":"agree to a 30% discount"}'
 //   npm run agent -- act impersonate --task task_... --payload '{"description":"post as the owner"}'
+//   npm run agent -- send --task task_... --to venue@example.com --body "See you at ..."   # the gate sends it (or not)
 
 const BASE = process.env.INTERLOCK_URL ?? "http://localhost:3000";
 const TOKEN = process.env.AGENT_TOKEN ?? "";
@@ -66,11 +67,34 @@ async function act(actionType: string, cancelAfterMs: number) {
   else console.log(`[agent] not doing it (${v.status})`);
 }
 
+/** A message the gate sends on the agent's behalf. The agent declares nothing; the gate reads it. */
+async function send(cancelAfterMs: number) {
+  const to = arg("--to") ?? "";
+  const body = arg("--body") ?? "";
+  const declared = arg("--declare");
+  console.log(`[agent] sending to ${to} via venue-inbox: ${body}`);
+  const res = await fetch(`${BASE}/api/act/send`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ task_id: TASK, channel: "venue-inbox", to, body, ...(declared ? { declared_type: declared } : {}) }),
+  });
+  let v = await res.json();
+  if (!res.ok) throw new Error(JSON.stringify(v));
+  console.log(`[gate] ${v.decision} ${v.reasons.join(", ")} -> ${v.status}`);
+  for (const d of (v.detected ?? []) as { type: string; source: string; field: string; parts: string[] }[]) {
+    console.log(`[gate]   found ${d.type}: ${d.field} (${d.source}: ${d.parts.join(", ")})`);
+  }
+  v = await waitForHuman(v, cancelAfterMs);
+  if (v.status === "SENT") console.log(`[agent] the gate delivered it (message ${v.message_id})`);
+  else console.log(`[agent] not sent (${v.status})`);
+}
+
 async function main() {
   const name = process.argv[2] ?? "quote";
   const cancelIdx = process.argv.indexOf("--cancel-after");
   const cancelAfterMs = cancelIdx > 0 ? Number(process.argv[cancelIdx + 1]) * 1000 : Infinity;
   if (name === "act") return act(process.argv[3], cancelAfterMs);
+  if (name === "send") return send(cancelAfterMs);
   const times = Number(arg("--times") ?? 1);
   for (let i = 1; i <= times; i++) {
     if (times > 1) console.log(`\n[agent] purchase ${i}/${times}`);
