@@ -2,6 +2,8 @@
 
 Solana devnet. Run on the owner's machine: World ID steps need World App on a phone.
 
+Recording the videos and filling in the submission: see [Submission and recording](#submission-and-recording) at the end.
+
 ## Get the latest code
 
 Run these one line at a time. `.env.local` and `data/` are ignored by git; nothing below touches them.
@@ -224,3 +226,157 @@ Approval is bound to the exact text: approve one with World ID and it is sent as
 or with one word changed, and it is a new decision that needs a new approval.
 
 Avoid `!` inside the double-quoted `--body` in zsh (history expansion).
+
+## Submission and recording
+
+### What Colosseum asks for
+
+Checked on 2026-10-02 from web-search summaries of Colosseum's pages; colosseum.com itself could
+not be opened from the build environment. **Check the submission form before relying on this.**
+
+| Item | What we found | Still to confirm on the form |
+|---|---|---|
+| Deadline | 2026-10-12 | hour and time zone |
+| Pitch video | the most important item, reviewed first. **2 minutes** is given for Crypto World's Fair; other Colosseum pages say up to 3. Content: team background, the problem, who it is for, validation, vision | hosting (a link: YouTube / Loom / Drive?) |
+| Technical demo video | 2–3 minutes: the core features built, the stack, the design decisions, especially how Solana is used (on-chain logic, architecture) | hosting |
+| Form fields | product name and short description; blockchains and tools integrated; every teammate with background; location; a logo or graphic; GitHub repository (public encouraged); go-to-market, demand validation, distribution plan | exact field names and limits |
+
+Plan: pitch video **≤ 2:00**, technical demo **≤ 3:00**, so either reading of the rule is met.
+
+Sources: [Colosseum: Perfecting your hackathon submission](https://blog.colosseum.com/perfecting-your-hackathon-submission/),
+[Crypto World's Fair](https://colosseum.com/worldsfair), [How to win a Colosseum hackathon](https://blog.colosseum.com/how-to-win-a-colosseum-hackathon/).
+
+### The story, in one line per scenario
+
+One task carries the whole demo. The order follows the argument:
+
+| # | Scenario | The point it makes |
+|---|---|---|
+| 1 | Task budget and payments | The budget lives on Solana as an Allowance delegated to the gate's key. The agent holds no key. Three payments go through; the fourth stops on the chain's remaining balance. |
+| 4 | Muse: the gate reads the message | A budget cannot see a zero-dollar action. The agent sends a message with the owner's address and declares nothing; the gate finds the address in the text and holds it. The owner rejects; the venue never receives it. |
+| 2 | Declared actions | `impersonate` is denied outright: no approval page, no human can override it. |
+| 3 | Close the task | The owner revokes the Allowance on chain. The next payment stops before anything else is checked. |
+
+Scenario 4 comes second on purpose: it is the reason the project exists, and it lands right after
+the viewer has seen that budgets work.
+
+### Before recording
+
+- Screen: terminal on the left (font ≥ 18 pt, dark theme, prompt shortened), browser on the right
+  at 125 % zoom. Phone with World App nearby (only needed if you show an approval).
+- Tabs, open in this order: http://localhost:3000/tasks, http://localhost:3000/inbox,
+  http://localhost:3000 (timeline), Solana Explorer (devnet).
+- Start from a clean timeline (optional; keeps the screen readable). This keeps
+  `data/protected.json` and the World ID owner pinning:
+
+```bash
+mv data/ledger.jsonl data/ledger-before-recording.jsonl
+mv data/inbox.jsonl data/inbox-before-recording.jsonl
+```
+
+- `npm run task -- preflight` → `all set`. Owner has ≥ 1.00 USDC.
+- `npm run task -- protect list` → `owner.home` is there (demo address, not your real one).
+- `npm run dev` running in a second terminal, off screen.
+- Do a full dry run once; then record. Waiting (Solana confirmations, the agent's polling) can be
+  cut in editing. Cut, do not speed up or fake: every result on screen must be a real run.
+
+### Technical demo (≤ 3:00): scenes, commands, what to point at
+
+Replace `task_…` with the id printed by the first command.
+
+**0:00–0:15 · What it is**
+- Show the README diagram (top of the repo) or say it over the terminal:
+  "The agent holds no key. Every payment and every message goes through this gate."
+
+**0:15–1:15 · Scenario 1: the budget is on Solana**
+
+```bash
+npm run task -- open --purpose "Make one music video" --budget 1.00 --expires 2026-10-13T00:00:00Z
+```
+- Point at `allowance.pubkey`, `delegate` (= the gate key, not the agent), `create_tx`.
+- Click the Allowance link → Explorer: the account is owned by the Subscriptions program
+  `De1egA…`. Say: "This is a standard Fixed delegation. Interlock has no budget state of its own."
+
+```bash
+npm run agent -- sol-clip --task task_… --times 4
+```
+- Purchases 1–3: point at `[gate] PAY …`, the three `screening` lines (`scan_message: SKIPPED` is
+  expected on Solana), and the devnet tx.
+- Purchase 4: `BLOCK ALLOWANCE_INSUFFICIENT`. Say: "0.10 left on chain; 0.30 does not fit."
+- Switch to /tasks: point at used 0.90 / remaining 0.10 **and the slot**: the number was read from
+  chain, not from our database.
+- Optional (5 s): one payment tx in Explorer, the `transferFixed` pull under the delegation.
+
+**1:15–2:05 · Scenario 4: Muse**
+
+```bash
+npm run agent -- send --task task_… --to venue@example.com --body "Saturday 18:00 works for us."
+```
+- `ALLOW … CONTENT_NONE_DETECTED -> SENT`. Switch to /inbox: the message is there.
+
+```bash
+npm run agent -- send --task task_… --to venue@example.com --body "Great, the owner will meet you at 神宮前1丁目2番3号 on Saturday."
+```
+- Point at: no type declared in the command; `CONTENT_PROTECTED_MATCH`;
+  `found disclose: owner.home (protected: street_number, locality)`.
+- Open the approval URL. Point at the message, `found: owner.home`, and `bound to sha256 …`
+  ("approval covers this exact text"). Click **Reject**.
+- Terminal: `HUMAN_REJECTED`, `not sent`. Switch to /inbox: **still only the first message.**
+- Timeline (/): the card says `Not sent: owner rejected`. Expand its ledger events: hashes and
+  which parts matched, no address.
+- Say: "A zero-dollar action, stopped by what it says, not by how much it costs."
+
+**2:05–2:20 · Scenario 2: some things no one can approve**
+
+```bash
+npm run agent -- act impersonate --task task_… --payload '{"description":"post on social media as the owner"}'
+```
+- `DENY ACTION_DENIED -> DENIED`, and no approval URL is printed.
+
+**2:20–2:50 · Scenario 3: the owner pulls the plug**
+
+```bash
+npm run task -- close task_…
+npm run agent -- sol-clip --task task_…
+```
+- Point at the `Revoke tx`; Explorer on the Allowance: account not found.
+- `BLOCK TASK_NOT_ACTIVE`, before screening. /tasks: closed.
+
+**2:50–3:00 · Close**
+- Timeline header: `ledger hash chain intact`. The GitHub repo URL on screen.
+
+### Pitch video (≤ 2:00): outline
+
+Talking head or voice over slides; 15–20 s of the demo footage inside.
+
+| Time | Content |
+|---|---|
+| 0:00–0:20 | The problem, as a story: an agent booking a venue sent the owner's home address. It cost nothing, so no spending limit saw it. |
+| 0:20–0:45 | Why budgets are not enough: they cap money; they cannot read what an agent says. And a budget an agent holds the key to is not a limit. |
+| 0:45–1:15 | x402 Interlock: one gate the agent must go through. Budgets are Solana Allowances delegated to the gate's key; payments are x402; messages are sent by the gate, which reads them. Clip: the Muse message held, the inbox empty. |
+| 1:15–1:35 | Who it is for: people and teams who let agents spend and talk for them (bookings, procurement, outreach). |
+| 1:35–1:50 | What is real today: everything shown ran on devnet (list from the README status table). |
+| 1:50–2:00 | Next: reading meaning, not only data (phase 2), and "is this still the task?" (Jev). Team, one line. |
+
+Do not claim users, traction or validation that do not exist. If the form asks for demand
+validation and there is none yet, say what you will measure and how.
+
+### Submission text: draft
+
+Fill in the bracketed parts yourself.
+
+- **Name:** x402 Interlock
+- **One-line description:** A gate between an AI agent and everything it does: per-task budgets as
+  Solana Allowances delegated to the gate, x402 payments, and outgoing messages that the gate reads
+  and holds when they disclose the owner's data.
+- **Blockchains and tools:** Solana devnet; Solana Subscriptions & Allowances program
+  (`@solana/subscriptions`, Fixed delegation, `transferFixed`, revoke); `@solana/kit` 7; x402
+  (`@x402/svm`, PayAI facilitator); Intercepta (address and token screening); World ID (owner
+  approval); Next.js.
+- **What is verified:** the README "Status (Colosseum build)" table, with devnet transaction links.
+- **Team:** [names, backgrounds, previous work]
+- **Location:** [city, country]
+- **Logo:** [file]
+- **GitHub:** https://github.com/kato9292929/x402-Interlock (public)
+- **Pitch video:** [link] · **Technical demo:** [link]
+- **Go-to-market / validation / distribution:** [your own answer; see the note under the pitch outline]
