@@ -188,3 +188,39 @@ Expected:
 - the Allowance account is gone on chain (Explorer: account not found)
 - the payment: `BLOCK TASK_NOT_ACTIVE`
 - a closed task cannot be reopened; resuming needs a new task
+
+## 4. Muse, for real: the gate reads the message and holds it
+
+The agent no longer declares anything. It asks the gate to send a message; the gate reads the
+text, finds the owner's address, and holds it for the owner. The venue inbox shows what the venue
+actually received.
+
+Use a demo address for the recording, not your real one: the approval page shows the message.
+Registering a real address works the same way; leave the value off the command and the CLI asks for
+it, so it does not end up in your shell history.
+
+```bash
+npm run task -- protect add address home "〒150-0001 東京都渋谷区神宮前1丁目2番3号"
+npm run task -- protect list
+npm run task -- open --purpose "Book the venue for the music video" --budget 0.10 --expires 2026-10-13T00:00:00Z
+npm run agent -- send --task task_... --to venue@example.com --body "Saturday 18:00 works for us."
+npm run agent -- send --task task_... --to venue@example.com --body "Great, the owner will meet you at 神宮前1丁目2番3号 on Saturday."
+```
+
+Expected:
+- `protect add`: `"registered": "owner.home"`. `protect list` shows the value masked.
+- first message: `ALLOW ACTION_ALLOW, CONTENT_NONE_DETECTED -> SENT`; it appears on http://localhost:3000/inbox.
+- second message: `ASK_HUMAN ACTION_ASK_HUMAN, CONTENT_PROTECTED_MATCH -> AWAITING_HUMAN`,
+  `found disclose: owner.home (protected: street_number, locality)`, and an approval URL.
+  The page shows the message, the recipient and what was found. **Reject** → `HUMAN_REJECTED`,
+  `not sent`. The inbox still shows only the first message.
+- the timeline (/) shows `Not sent: owner rejected`; the ledger has no address, only which parts
+  matched.
+
+Other spellings are caught the same way (try any of them as `--body`):
+`神宮前１－２－３`, `神宮前一丁目二番三号`, `〒1500001`, `Jingumae 1-2-3`.
+
+Approval is bound to the exact text: approve one with World ID and it is sent as is; send it again,
+or with one word changed, and it is a new decision that needs a new approval.
+
+Avoid `!` inside the double-quoted `--body` in zsh (history expansion).

@@ -66,10 +66,10 @@ from startup or from an earlier step.
 | 3 | before the task's deadline | `BLOCK TASK_EXPIRED` | same |
 | 4 | the Allowance exists, is delegated to the gate key, has not expired on chain; the RPC answered | `BLOCK ALLOWANCE_REVOKED` / `_DELEGATE_MISMATCH` / `_EXPIRED` / `_UNAVAILABLE` (fail closed) | [`lib/tasks.ts#L184`](lib/tasks.ts#L184) |
 | 5 | the remaining amount covers this payment | `BLOCK ALLOWANCE_INSUFFICIENT` | same |
-| 6 | then the existing Intercepta screening, fixed rules and action policy | as before | [`lib/gate.ts#L159`](lib/gate.ts#L159) |
+| 6 | then the existing Intercepta screening, fixed rules and action policy | as before | [`lib/gate.ts#L165`](lib/gate.ts#L165) |
 
 Checks 1–5 run when a payment is evaluated, and again at signing time
-([`lib/gate.ts#L317`](lib/gate.ts#L317)). The re-check matters when a
+([`lib/gate.ts#L335`](lib/gate.ts#L335)). The re-check matters when a
 payment waited for the owner's approval: meanwhile the task may have been closed or the budget
 used by other payments. Each paid payment therefore has two `allowance_checked` entries,
 `evaluate` and `signing`, each with its own slot. The tests assert this, and removing the
@@ -78,7 +78,7 @@ signing-time check makes them fail.
 **Pull, then pay.** A Fixed delegation can only be spent through the program's `transferFixed`,
 signed by the delegatee. A standard x402 Solana payment is a plain token transfer signed by the
 payer. So for each approved payment the gate first pulls exactly that amount under the Allowance
-into its own token account ([`lib/gate.ts#L322`](lib/gate.ts#L322)), then pays
+into its own token account ([`lib/gate.ts#L340`](lib/gate.ts#L340)), then pays
 the seller with a normal x402 `exact` payment signed by the same gate key, through the PayAI
 facilitator. The on-chain Allowance still limits the total. If the seller does not settle after a
 pull, the funds stay in the gate's account (the timeline flags that spend and on-chain use differ).
@@ -114,7 +114,7 @@ every check, but we keep them separate:
 
 Money rules cannot see a disclosed address or a promised discount: those cost 0 and pass any
 budget. So the agent also asks before other kinds of action
-([`lib/gate.ts#L510`](lib/gate.ts#L510)). Policies are in
+([`lib/gate.ts#L539`](lib/gate.ts#L539)). Policies are in
 [`config/actions.json`](config/actions.json):
 
 | Action | What it covers | Default policy |
@@ -137,11 +137,38 @@ anything on the agent's behalf. The ledger stores the payload's hash, its field 
 agent's one-line description. The payload values themselves (an address, the text) are never
 stored.
 
-**Limitation of this design.** The action type is declared by the agent. An agent that does not
-realise it is disclosing an address (the Muse incident) will not ask, and nothing stops it: the
-gate never sees the message it actually sends. A design that moves sending behind the gate and
-classifies the text itself is proposed in
-[`docs/PROPOSAL-action-executor.md`](docs/PROPOSAL-action-executor.md); it is not implemented.
+**Limitation of declared actions.** With `/api/gate/evaluate` the action type is declared by
+the agent. An agent that does not realise it is disclosing an address (the Muse incident) will not
+ask. That is why messages now go through the gate instead.
+
+### Messages: the gate sends, and reads the text itself
+
+`POST /api/act/send { task_id, channel, to, body, declared_type? }` (agent token;
+[`lib/gate.ts#L629`](lib/gate.ts#L629)). The gate holds the channel; the agent has no other way
+to deliver. The demo channel is a venue inbox ([`/inbox`](app/inbox/page.tsx)) that shows what the
+recipient actually received. This is phase 1 of
+[`docs/PROPOSAL-action-executor.md`](docs/PROPOSAL-action-executor.md).
+
+The gate decides the type from the text, deterministically ([`lib/protect.ts`](lib/protect.ts)):
+- **The owner's registered data** (`npm run task -- protect add address home`): stored only in
+  `data/protected.json` on the server, never in the ledger, never sent to the agent. The text is
+  normalised first (full-width → half-width, dash variants, kanji numerals, `1丁目2番3号` / `1-2-3`).
+  An address hits on the whole address, on its postal code, on its street number, or on the
+  first part of the street number next to the neighbourhood name. Phone numbers are compared as
+  national numbers (`+81 90…` = `090…`); email addresses case-insensitively, also with `(at)`.
+- **Patterns for unregistered data**: Japanese phone numbers, email addresses, card numbers
+  (Luhn-valid).
+- Any hit → `disclose`. The strictest policy of every type found, plus the type the agent
+  declared, decides; a declaration can only make it stricter. Nothing found → sent automatically.
+- **Approval is bound to the message.** The World ID signal binds `sha256(channel, recipient,
+  text)`. On approval the gate sends exactly the held text, after checking the hash again; any
+  other text, including the same text sent again later, is a new decision.
+- The ledger records hashes, the body length, and which entry and which parts matched
+  (`owner.home: postal_code, street_number`), never the text, the recipient or a matched value.
+
+Not covered (phase 2+): meaning (a promise, speaking as the owner, a paraphrased address), text
+split across messages or encoded, images. Any channel the agent can reach without the gate
+bypasses it, the same way a funded key of its own would bypass the budget.
 
 ### Intercepta on Solana
 
@@ -182,7 +209,9 @@ Existing payment events now carry `task_id`. All of these are in the same hash c
 | Tasks, owner-only issuance, delegate checks, the five checks at evaluate and at signing, action policies, ledger | **Verified offline**: `test/tasks.integration.test.ts` (22 tests) runs against an in-memory chain. Its account bytes are produced by the SDK's own encoder, so the real decoder runs. |
 | Allowance create / read / revoke on devnet | **Live on devnet (2026-09-30)**, `npm run test:devnet` on the owner's Mac: create tx [2gaReUQd…](https://explorer.solana.com/tx/2gaReUQdRso7ovKH66hNSuUFLzqdzKprRzg3iPzc2d2WmcPJcTi3fPReh3FYK7LMe4ZEFaxS4CMFZmGVFJEyCjaN?cluster=devnet), read back at slot 506042095 (delegator = owner, delegatee = gate key, 10000 atomic), revoke tx [3SWUSX1o…](https://explorer.solana.com/tx/3SWUSX1ouX9pcpJfcwmgoyXfGW5KVR1h3myT54JA4wYATZthZ3bRB1WaVSPrT4JidhKjchUSHnRoBTHypS8wFLCo?cluster=devnet), then the account read as closed. The owner's SubscriptionAuthority was set up with `init-authority` the same day. |
 | Scenario 1 on devnet: task, pull (`transferFixed`), x402 Solana payment through PayAI, budget stop | **Live on devnet (2026-10-01)** on the owner's Mac. Task `task_c3691d19fc5bc08467a3db28`, Allowance [HvBKR2s8…](https://explorer.solana.com/address/HvBKR2s8xrKh26AMNpDswCTAcrndmzqektWLqY4LP5JH?cluster=devnet) for 1.00 USDC delegated to the gate key. Purchases 1–3 (0.30 each) paid: [hwV1op5x…](https://explorer.solana.com/tx/hwV1op5xkFtYJ5Fu6nQVq4KAfAKkDL29oxio26c3STd7MHW9uqHUxMhV6WyFCDRrUV81TWzKcsQuCNQ3Jtc17NQ?cluster=devnet), [4mL59wt5…](https://explorer.solana.com/tx/4mL59wt5JmPBu8Nvtz6VzksfNT82qBckj4eEP8ni1WaQcNFJ8HpciM8cApHiaeobtGsHiTDdHRYNHQUSnJHKEnN5?cluster=devnet), [5BUdAQ5j…](https://explorer.solana.com/tx/5BUdAQ5jBU5pqmEmnNFHvbDBd6BFDLKeXTEHsGVpy1g8RGttpQCBAFjpy1MHP6SDVX7Jw13AqqupYewKLYFDZgyX?cluster=devnet). Purchase 4: `BLOCK ALLOWANCE_INSUFFICIENT`. `task show` read 0.9 used / 0.1 remaining at slot 506513123. Screening: `quick_scan_address` SAFE, `scan_token` SAFE, `scan_message` SKIPPED (`SCAN_MESSAGE_NOT_APPLICABLE_SOLANA`). |
-| Scenario 2 (actions) and 3 (close, then pay) on devnet | **Not yet run.** |
+| Scenario 2 (declared actions) on devnet task | **Live (2026-10-02)** on the owner's Mac: `disclose` → ASK_HUMAN → rejected in the browser → `HUMAN_REJECTED`; `commit` → ASK_HUMAN → 180 s → `HUMAN_EXPIRED`; `impersonate` → `DENY ACTION_DENIED` with no approval URL. |
+| Scenario 3 (close, then pay) on devnet | **Live (2026-10-02)**: close revoked the Allowance, tx [2W3jCSWi…](https://explorer.solana.com/tx/2W3jCSWiE3VmskK368EYXcbW1mH1aHPdkZNUXbEYAxFwdaYHDLjFTazhwjF14iS7MXP7A7YgD3KGzqJVBckceY5t?cluster=devnet); the next payment `BLOCK TASK_NOT_ACTIVE` (before screening); `task show` status closed, remaining 0 at slot 506551607. |
+| Messages sent through the gate (`POST /api/act/send`, deterministic content check, venue inbox) | **Verified offline**: `test/protect.test.ts`, send tests in `test/tasks.integration.test.ts`, and an HTTP run against a local server. **Not yet run on the owner's machine.** |
 | `@x402/svm` 2.27.0 with `@solana/kit` 7 | `npm ci` warns that `@x402/svm`'s bundled token libraries declare `@solana/kit` ^5 as a peer. **Works at runtime**: the scenario 1 payments above went through it. |
 
 ### Not implemented
@@ -190,7 +219,7 @@ Existing payment events now carry `task_id`. All of these are in the same hash c
 - Writing ledger hashes to Solana. The Allowance already puts budget and delegation history on chain.
 - A delegation format or delegation state of Interlock's own.
 - Count or rate limits. They cannot tell a runaway from a busy but healthy agent.
-- Executing non-payment actions on the agent's behalf.
+- Executing non-payment actions on the agent's behalf, other than messages on the demo channel.
 - Production deployment.
 - **Future:** a separate "is this still the task?" judgement (for example Jev's `task_fit`) to
   catch a runaway agent. The budget only caps the loss.
@@ -210,9 +239,9 @@ Official reference: https://docs.web3antivirus.io/reference/
 | Reading `ToxicScoreShortResponseV2` (both address scans) | [`lib/intercepta.ts#L72`](lib/intercepta.ts#L72) |
 | Scan Token `GET …/token-intelligence/token/{address}/risks?chainId=8453` · [ref](https://docs.web3antivirus.io/reference/scan-token) | [`lib/intercepta.ts#L195`](lib/intercepta.ts#L195), reading `TokenRiskAnalysisV2Response` [L98](lib/intercepta.ts#L98) |
 | Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L230`](lib/intercepta.ts#L230), verdict from `riskGroup` [L210](lib/intercepta.ts#L210) |
-| Testnet payTo → mainnet screening address | [`lib/policy.ts#L112`](lib/policy.ts#L112) |
+| Testnet payTo → mainnet screening address | [`lib/policy.ts#L117`](lib/policy.ts#L117) |
 | Screening on Base mainnet + aggregation | [`lib/screening.ts#L111`](lib/screening.ts#L111) |
-| Called from the gate, before any signing | [`lib/gate.ts#L177`](lib/gate.ts#L177) |
+| Called from the gate, before any signing | [`lib/gate.ts#L183`](lib/gate.ts#L183) |
 
 ### How Intercepta results are judged
 
@@ -272,7 +301,7 @@ The API key is not saved.
 | RP-signed request (`signRequest`, computed locally, TTL) | [`lib/world.ts#L85`](lib/world.ts#L85) |
 | **Server-side verification** | [`lib/world.ts#L130`](lib/world.ts#L130): nonce / action / environment ([L135](lib/world.ts#L135)), signal = this payment ([L144](lib/world.ts#L144)), World Developer API `POST https://developer.world.org/api/v4/verify/{rp_id}` ([L155](lib/world.ts#L155)), owner nullifier ([L185](lib/world.ts#L185)) |
 | Sandbox/staging API key (optional, never sent for production) | [`lib/world.ts#L30`](lib/world.ts#L30), 401/403 diagnosis [L168](lib/world.ts#L168) |
-| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L415`](lib/gate.ts#L415), [L444](lib/gate.ts#L444), [L397](lib/gate.ts#L397), [L450](lib/gate.ts#L450) |
+| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L434`](lib/gate.ts#L434), [L469](lib/gate.ts#L469), [L416](lib/gate.ts#L416), [L475](lib/gate.ts#L475) |
 | IDKit widget (relays the proof only) | [`app/approve/[id]/approval-client.tsx#L101`](app/approve/%5Bid%5D/approval-client.tsx#L101) |
 
 The browser only passes the IDKit result along. A payment is signed only after the server has

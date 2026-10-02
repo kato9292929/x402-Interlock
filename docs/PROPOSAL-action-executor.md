@@ -1,6 +1,8 @@
 # Proposal: the gate sends, and judges the text itself
 
-Status: **proposal, not implemented.** Written 2026-10-02 after review feedback on the action gate.
+Status: **phase 1 implemented** (2026-10-02; see README, "Messages: the gate sends"). Phases 2 and 3 are still proposals. Written 2026-10-02 after review feedback on the action gate.
+
+Difference from this text in phase 1: the approval page lists what was found and which parts matched; it does not highlight them inside the text.
 
 ## The problem with the current action gate
 
