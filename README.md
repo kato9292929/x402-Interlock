@@ -137,6 +137,12 @@ anything on the agent's behalf. The ledger stores the payload's hash, its field 
 agent's one-line description. The payload values themselves (an address, the text) are never
 stored.
 
+**Limitation of this design.** The action type is declared by the agent. An agent that does not
+realise it is disclosing an address (the Muse incident) will not ask, and nothing stops it: the
+gate never sees the message it actually sends. A design that moves sending behind the gate and
+classifies the text itself is proposed in
+[`docs/PROPOSAL-action-executor.md`](docs/PROPOSAL-action-executor.md); it is not implemented.
+
 ### Intercepta on Solana
 
 Intercepta's documented chains are EVM. The Scan Message `chainId` enum includes Base (8453) but
@@ -175,8 +181,9 @@ Existing payment events now carry `task_id`. All of these are in the same hash c
 |---|---|
 | Tasks, owner-only issuance, delegate checks, the five checks at evaluate and at signing, action policies, ledger | **Verified offline**: `test/tasks.integration.test.ts` (22 tests) runs against an in-memory chain. Its account bytes are produced by the SDK's own encoder, so the real decoder runs. |
 | Allowance create / read / revoke on devnet | **Live on devnet (2026-09-30)**, `npm run test:devnet` on the owner's Mac: create tx [2gaReUQd…](https://explorer.solana.com/tx/2gaReUQdRso7ovKH66hNSuUFLzqdzKprRzg3iPzc2d2WmcPJcTi3fPReh3FYK7LMe4ZEFaxS4CMFZmGVFJEyCjaN?cluster=devnet), read back at slot 506042095 (delegator = owner, delegatee = gate key, 10000 atomic), revoke tx [3SWUSX1o…](https://explorer.solana.com/tx/3SWUSX1ouX9pcpJfcwmgoyXfGW5KVR1h3myT54JA4wYATZthZ3bRB1WaVSPrT4JidhKjchUSHnRoBTHypS8wFLCo?cluster=devnet), then the account read as closed. The owner's SubscriptionAuthority was set up with `init-authority` the same day. |
-| Pull (`transferFixed`) and x402 Solana payment through PayAI on devnet | **Not yet run.** devnet and PayAI were unreachable from the build environment. |
-| `@x402/svm` 2.27.0 with `@solana/kit` 7 | Type-checks. `@x402/svm`'s bundled token libraries declare `@solana/kit` ^5 as a peer; runtime compatibility is not yet confirmed. |
+| Scenario 1 on devnet: task, pull (`transferFixed`), x402 Solana payment through PayAI, budget stop | **Live on devnet (2026-10-01)** on the owner's Mac. Task `task_c3691d19fc5bc08467a3db28`, Allowance [HvBKR2s8…](https://explorer.solana.com/address/HvBKR2s8xrKh26AMNpDswCTAcrndmzqektWLqY4LP5JH?cluster=devnet) for 1.00 USDC delegated to the gate key. Purchases 1–3 (0.30 each) paid: [hwV1op5x…](https://explorer.solana.com/tx/hwV1op5xkFtYJ5Fu6nQVq4KAfAKkDL29oxio26c3STd7MHW9uqHUxMhV6WyFCDRrUV81TWzKcsQuCNQ3Jtc17NQ?cluster=devnet), [4mL59wt5…](https://explorer.solana.com/tx/4mL59wt5JmPBu8Nvtz6VzksfNT82qBckj4eEP8ni1WaQcNFJ8HpciM8cApHiaeobtGsHiTDdHRYNHQUSnJHKEnN5?cluster=devnet), [5BUdAQ5j…](https://explorer.solana.com/tx/5BUdAQ5jBU5pqmEmnNFHvbDBd6BFDLKeXTEHsGVpy1g8RGttpQCBAFjpy1MHP6SDVX7Jw13AqqupYewKLYFDZgyX?cluster=devnet). Purchase 4: `BLOCK ALLOWANCE_INSUFFICIENT`. `task show` read 0.9 used / 0.1 remaining at slot 506513123. Screening: `quick_scan_address` SAFE, `scan_token` SAFE, `scan_message` SKIPPED (`SCAN_MESSAGE_NOT_APPLICABLE_SOLANA`). |
+| Scenario 2 (actions) and 3 (close, then pay) on devnet | **Not yet run.** |
+| `@x402/svm` 2.27.0 with `@solana/kit` 7 | `npm ci` warns that `@x402/svm`'s bundled token libraries declare `@solana/kit` ^5 as a peer. **Works at runtime**: the scenario 1 payments above went through it. |
 
 ### Not implemented
 
