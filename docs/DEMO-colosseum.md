@@ -267,6 +267,28 @@ These are Jev's answers on real data, so the exact numbers are what we want to s
 fail. If Jev is unreachable, every line says `UNAVAILABLE` and would_have `ask_human`, and the
 payments still go through.
 
+## 6. Delivery Review (spec/07 stage 3)
+
+Record only: never reverses a payment. With `npm run dev` running in another terminal:
+
+```bash
+cd ~/x402-Interlock
+npm run delivery-review-run
+```
+
+It opens one task (0.30 USDC) and buys the same weekly stats from three demo sellers at 0.05 USDC
+each, stating what it needs (period 2026-09-27 to 2026-10-03; date, plays, listeners; ≥ 1 row):
+
+| Seller | Returns | Expected record |
+|---|---|---|
+| `sol-stats` | the requested period, all fields | `fields_ok true`, substance likely `real_data` |
+| `sol-stats-stale` | last year, a fixed value, no `listeners` | `fields_ok false`, period `mismatch`, missing `listeners` |
+| `sol-stats-empty` | no rows | `fields_ok false`, substance likely `empty` |
+
+It ends with `checks:` (`yes` / `NO`): all paid, empty seen as empty, period mismatch caught by
+code, no purchased body in the ledger, model and policy version recorded. Jev's numbers are what
+we want to see, not a pass or fail.
+
 ## Submission and recording
 
 ### What Colosseum asks for
