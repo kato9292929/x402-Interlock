@@ -100,6 +100,7 @@ class FakeChain implements AllowanceChain {
 let chain: FakeChain;
 let seller: Server, intercepta: Server, world: Server, typesafe: Server;
 let typesafeDown = false;
+const deliveryStates: { response: { body: string } }[] = [];
 const spendGuardStates: { task: { purpose: string }; candidate: { url: string }; history: { url: string }[] }[] = [];
 let sellerUrl = "";
 let SELLER_SOL = "";
@@ -164,7 +165,13 @@ before(async () => {
     const p = decodePaymentSignatureHeader(String(sig));
     paid.push(u.pathname + u.search);
     res.writeHead(200, { "content-type": "application/json", "PAYMENT-RESPONSE": encodePaymentResponseHeader({ success: true, transaction: "soltx", network: NETWORK, payer: chain.gate }) });
-    res.end(JSON.stringify({ served: u.pathname, amount: p.accepted.amount }));
+    const from = u.searchParams.get("from") ?? "2026-09-27";
+    const to = u.searchParams.get("to") ?? "2026-10-03";
+    const nonce = `body-nonce-${Math.random().toString(36).slice(2)}`;
+    if (u.pathname.includes("stats-stale")) return res.end(JSON.stringify({ nonce, period: { from: "2025-01-01", to: "2025-01-07" }, items: [{ date: "2025-01-01", plays: 100 }] }));
+    if (u.pathname.includes("stats-empty")) return res.end(JSON.stringify({ nonce, period: { from, to }, items: [] }));
+    if (u.pathname.includes("stats")) return res.end(JSON.stringify({ nonce, period: { from, to }, items: [{ date: from, plays: 1234, listeners: 321 }, { date: to, plays: 1500, listeners: 400 }] }));
+    res.end(JSON.stringify({ served: u.pathname, amount: p.accepted.amount, nonce }));
   });
   sellerUrl = await listen(seller);
 
@@ -195,7 +202,26 @@ before(async () => {
         res.writeHead(503, { "content-type": "application/json" });
         return res.end("{}");
       }
-      const { state } = JSON.parse(raw) as { state: (typeof spendGuardStates)[number] & { candidate: { description: string | null } } };
+      const parsed = JSON.parse(raw) as { state: (typeof spendGuardStates)[number] & { candidate: { description: string | null } }; questions: Record<string, unknown> };
+      if (parsed.questions.substance) {
+        // Delivery Review questions: judge the body it was given.
+        const st = parsed.state as unknown as { response: { body: string } };
+        deliveryStates.push(st);
+        const empty = /\[\s*\]/.test(st.response.body);
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(
+          JSON.stringify({
+            model: "jev-1.13.0",
+            answers: {
+              answers: { type: "noul", noul: empty ? 0.05 : 0.9 },
+              substance: { type: "choice", choice: empty ? "empty" : "real_data", confidence: 0.8, probabilities: empty ? { empty: 0.9, real_data: 0.05, undeterminable: 0.05 } : { real_data: 0.9, empty: 0.05, undeterminable: 0.05 } },
+              fulfillment: { type: "score", score: empty ? 0.5 : 8.2, confidence: 0.6, legend: {}, probabilities: { "0": 0.1 } },
+            },
+            usage: { input_tokens: 50, output_tokens: 3 },
+          }),
+        );
+      }
+      const { state } = parsed;
       spendGuardStates.push(state);
       const related = /music video/i.test(state.task.purpose) && /clip|render/i.test(String(state.candidate.description));
       const dup = state.history.some((h) => h.url === state.candidate.url);
@@ -635,6 +661,68 @@ test("an existing BLOCK stays a BLOCK whatever Spend Guard says", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Delivery Review (spec/07 section 5): record only
+// ---------------------------------------------------------------------------
+
+const REQ = { period: { from: "2026-09-27", to: "2026-10-03" }, required_fields: ["date", "plays", "listeners"], min_items: 1 };
+const buyStats = async (task_id: string, path: string) =>
+  (await gate()).evaluate({ url: `${sellerUrl}/${path}?from=2026-09-27&to=2026-10-03&n=${++buyN}`, purpose: "weekly stats", task_id, requirements: REQ, baseUrl: "http://x" });
+const delivery = (decision_id: string) => new Ledger().byDecision(decision_id).find((e) => e.event_type === "delivery_review")?.data;
+
+test("delivery: a good answer is recorded with fields_ok, model and policy version; no body in the ledger", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const v = await buyStats(t.task_id, "sol-stats");
+  assert.equal(v.status, "PAID");
+  const d = delivery(v.decision_id)!;
+  assert.equal(d.fields_ok, true);
+  assert.equal((d.fields as { period: string }).period, "match");
+  assert.equal((d.fields as { item_count: number }).item_count, 2);
+  assert.equal(d.substance, "real_data");
+  assert.equal(d.jev_model, "jev-1.13.0");
+  assert.match(String(d.policy_version), /#[0-9a-f]{12}$/);
+  assert.match(String(d.body_sha256), /^[0-9a-f]{64}$/);
+  assert.equal(v.delivery_review?.fields_ok, true);
+  // Jev saw the body; the ledger did not keep it.
+  const body = deliveryStates.at(-1)!.response.body;
+  const nonce = JSON.parse(body).nonce as string;
+  assert.ok(!readFileSync(new Ledger().file, "utf8").includes(nonce));
+});
+
+test("delivery: an empty array is judged empty, and the payment stays paid", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const v = await buyStats(t.task_id, "sol-stats-empty");
+  assert.equal(v.status, "PAID");
+  const d = delivery(v.decision_id)!;
+  assert.equal(d.substance, "empty");
+  assert.equal(d.fields_ok, false);
+  assert.equal((d.fields as { item_count: number }).item_count, 0);
+  assert.equal((d.fields as { min_items_ok: boolean }).min_items_ok, false);
+  const after = new Ledger().byDecision(v.decision_id);
+  assert.equal(after.filter((e) => e.event_type === "payment_result").length, 1);
+  assert.equal(after.find((e) => e.event_type === "payment_result")!.data.status, "PAID");
+});
+
+test("delivery: the wrong period and missing fields are caught by code (fields_ok)", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const v = await buyStats(t.task_id, "sol-stats-stale");
+  const d = delivery(v.decision_id)!;
+  assert.equal(d.fields_ok, false);
+  assert.equal((d.fields as { period: string }).period, "mismatch");
+  assert.deepEqual((d.fields as { missing_fields: string[] }).missing_fields, ["listeners"]);
+});
+
+test("delivery: not recorded for a payment that did not happen", async () => {
+  const small = await openTask("0.30");
+  await pay(small.task_id);
+  const v = await pay(small.task_id);
+  assert.equal(v.status, "BLOCKED");
+  assert.equal(delivery(v.decision_id), undefined);
+});
+
+// ---------------------------------------------------------------------------
 // messages sent through the gate (deterministic content check)
 // ---------------------------------------------------------------------------
 
@@ -742,7 +830,7 @@ test("ledger: new events are in the hash chain, task_id on payment events, no se
   const l = new Ledger();
   assert.equal(l.verify(), -1);
   const all = l.readAll();
-  for (const type of ["task_opened", "task_closed", "action_judged", "action_sent", "allowance_checked", "spend_guard_review"]) {
+  for (const type of ["task_opened", "task_closed", "action_judged", "action_sent", "allowance_checked", "spend_guard_review", "delivery_review"]) {
     assert.ok(all.some((e) => e.event_type === type), type);
   }
   const taskIds = new Set(all.filter((e) => e.event_type === "task_opened").map((e) => e.decision_id));

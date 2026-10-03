@@ -13,6 +13,7 @@ export type LedgerEventType =
   | "action_judged"
   | "action_sent"
   | "spend_guard_review"
+  | "delivery_review"
   | "allowance_checked";
 
 export interface LedgerEvent {

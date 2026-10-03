@@ -23,6 +23,7 @@ export interface AppeThresholds {
     necessity_block: number;
     duplicate_ask: number;
   };
+  delivery_review: { mode: "off" | "record"; body_max_bytes: number };
 }
 
 export function loadThresholds(file = process.env.APPE_THRESHOLDS_PATH ?? path.join(process.cwd(), "config", "appe-thresholds.json")): AppeThresholds & { policy_version: string } {
@@ -32,6 +33,7 @@ export function loadThresholds(file = process.env.APPE_THRESHOLDS_PATH ?? path.j
   if (!["off", "shadow"].includes(t.spend_guard.mode)) {
     throw new Error(`spend_guard.mode ${t.spend_guard.mode} is not available yet: only off or shadow (spec/07 section 4 comes first)`);
   }
+  if (!["off", "record"].includes(t.delivery_review?.mode)) throw new Error(`delivery_review.mode must be off or record`);
   // The version a decision was made under: the declared version plus the file's own hash.
   const policy_version = `${t.version}#${createHash("sha256").update(raw).digest("hex").slice(0, 12)}`;
   return { ...t, policy_version };
