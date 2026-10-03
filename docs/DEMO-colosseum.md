@@ -227,6 +227,46 @@ or with one word changed, and it is a new decision that needs a new approval.
 
 Avoid `!` inside the double-quoted `--body` in zsh (history expansion).
 
+## 5. Spend Guard in shadow mode (spec/07, stages 1–2)
+
+Shadow mode never stops or changes a payment; it records what it would have done.
+
+```bash
+npm ci
+npm run task -- set-env TYPESAFE_API_KEY
+npm run jev-probe
+```
+
+- `set-env` asks for the key at a prompt (paste it, Enter), writes it to `.env.local`, does not
+  print it, and refuses if the key is already there.
+- `jev-probe`: `HTTP 200`, the raw response, `shape OK` for `necessity (noul)`, `nature (choice)`
+  and `fit (score)`, and `model returned: jev-…`. Paste the output; that model string gets pinned
+  in `config/appe-thresholds.json`.
+
+Restart `npm run dev` (it reads `.env.local` at startup), then:
+
+```bash
+npm run task -- open --purpose "Make one music video" --budget 1.00 --expires 2026-10-13T00:00:00Z
+npm run agent -- sol-clip --task task_... --times 2
+npm run task -- open --purpose "Prepare the quarterly tax filing" --budget 0.30 --expires 2026-10-13T00:00:00Z
+npm run agent -- sol-clip --task task_...
+npm run why
+```
+
+Expected:
+- every purchase still pays (`PAID`) as before; each shows one more line,
+  `[gate]   spend guard (shadow): would_have …`
+- music-video task, purchase 1: necessity high, nature `direct`, would_have `none` (likely)
+- music-video task, purchase 2: the same clip endpoint is in `history`; duplicate higher than
+  purchase 1, would_have possibly `ask_human (SPEND_GUARD_DUPLICATE)`
+- tax-filing task: a stock video clip; necessity low or nature `unrelated` → would_have `block`, and
+  **it is still paid**
+- `npm run why`: the `spend guard` block with probabilities, model and policy version
+
+These are Jev's answers on real data, so the exact numbers are what we want to see, not a pass or
+fail. If Jev is unreachable, every line says `UNAVAILABLE` and would_have `ask_human`, and the
+payments still go through.
+
 ## Submission and recording
 
 ### What Colosseum asks for

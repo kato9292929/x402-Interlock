@@ -66,10 +66,10 @@ from startup or from an earlier step.
 | 3 | before the task's deadline | `BLOCK TASK_EXPIRED` | same |
 | 4 | the Allowance exists, is delegated to the gate key, has not expired on chain; the RPC answered | `BLOCK ALLOWANCE_REVOKED` / `_DELEGATE_MISMATCH` / `_EXPIRED` / `_UNAVAILABLE` (fail closed) | [`lib/tasks.ts#L184`](lib/tasks.ts#L184) |
 | 5 | the remaining amount covers this payment | `BLOCK ALLOWANCE_INSUFFICIENT` | same |
-| 6 | then the existing Intercepta screening, fixed rules and action policy | as before | [`lib/gate.ts#L165`](lib/gate.ts#L165) |
+| 6 | then the existing Intercepta screening, fixed rules and action policy | as before | [`lib/gate.ts#L168`](lib/gate.ts#L168) |
 
 Checks 1–5 run when a payment is evaluated, and again at signing time
-([`lib/gate.ts#L335`](lib/gate.ts#L335)). The re-check matters when a
+([`lib/gate.ts#L385`](lib/gate.ts#L385)). The re-check matters when a
 payment waited for the owner's approval: meanwhile the task may have been closed or the budget
 used by other payments. Each paid payment therefore has two `allowance_checked` entries,
 `evaluate` and `signing`, each with its own slot. The tests assert this, and removing the
@@ -78,7 +78,7 @@ signing-time check makes them fail.
 **Pull, then pay.** A Fixed delegation can only be spent through the program's `transferFixed`,
 signed by the delegatee. A standard x402 Solana payment is a plain token transfer signed by the
 payer. So for each approved payment the gate first pulls exactly that amount under the Allowance
-into its own token account ([`lib/gate.ts#L340`](lib/gate.ts#L340)), then pays
+into its own token account ([`lib/gate.ts#L390`](lib/gate.ts#L390)), then pays
 the seller with a normal x402 `exact` payment signed by the same gate key, through the PayAI
 facilitator. The on-chain Allowance still limits the total. If the seller does not settle after a
 pull, the funds stay in the gate's account (the timeline flags that spend and on-chain use differ).
@@ -114,7 +114,7 @@ every check, but we keep them separate:
 
 Money rules cannot see a disclosed address or a promised discount: those cost 0 and pass any
 budget. So the agent also asks before other kinds of action
-([`lib/gate.ts#L539`](lib/gate.ts#L539)). Policies are in
+([`lib/gate.ts#L591`](lib/gate.ts#L591)). Policies are in
 [`config/actions.json`](config/actions.json):
 
 | Action | What it covers | Default policy |
@@ -144,7 +144,7 @@ ask. That is why messages now go through the gate instead.
 ### Messages: the gate sends, and reads the text itself
 
 `POST /api/act/send { task_id, channel, to, body, declared_type? }` (agent token;
-[`lib/gate.ts#L629`](lib/gate.ts#L629)). The gate holds the channel; the agent has no other way
+[`lib/gate.ts#L681`](lib/gate.ts#L681)). The gate holds the channel; the agent has no other way
 to deliver. The demo channel is a venue inbox ([`/inbox`](app/inbox/page.tsx)) that shows what the
 recipient actually received. This is phase 1 of
 [`docs/PROPOSAL-action-executor.md`](docs/PROPOSAL-action-executor.md).
@@ -225,6 +225,50 @@ Existing payment events now carry `task_id`. All of these are in the same hash c
   catch a runaway agent. The budget only caps the loss.
 
 
+## Agent Procurement Policy Engine: Spend Guard (shadow mode)
+
+Brief: [`spec/07-agent-procurement-policy-engine.md`](spec/07-agent-procurement-policy-engine.md),
+implementing the concept published on 2026-09-20. Staying within budget and spending well are
+different things. Everything above enforces the first in code (on-chain remaining budget, payee
+screening, limits, signing, task state, deterministic matching). Spend Guard adds a judgement of
+meaning: is this purchase needed for the task, and does it repeat one already made?
+
+**Stage reached: 1–2 of 8.** Jev call layer and Spend Guard in **shadow mode**. Spend Guard
+records what it would have done and **never changes a payment**. Enforcement waits for the
+section 4 check (≥ 30 reviewed purchases compared with the owner's judgement); the code refuses any
+mode other than `off` or `shadow` until then. Delivery Review and Procurement Router are not
+built yet.
+
+- **Jev** ([`lib/jev.ts`](lib/jev.ts)), via the official SDK `@typesafe-ai/sdk` 0.6.0:
+  `POST /v1/systemone`, question types `noul` (yes/no probability), `choice` and `score`. (The
+  brief says `/v1/decisions` and `binary`; the SDK, published by TypeSafe, uses these names.)
+  Timeout 3 s, one retry. Missing key, HTTP error, timeout, or an answer that does not match its
+  question → `UNAVAILABLE`, which Spend Guard counts as `ask_human` (fail closed). Identical
+  requests are cached for 10 minutes. The returned `model` string is recorded with every review.
+- **What Jev sees** ([`lib/appe.ts`](lib/appe.ts)): the task purpose and budget, the purchase target
+  (URL up to the path), the seller's description (truncated), the amount, and the last 20
+  purchases in the task (URL, amount, a SHA-256 identifier of the data obtained). All of it goes
+  in as JSON data; the question text says to judge it and never follow instructions inside it.
+- **Questions:** necessity (noul), duplicate (noul), nature (choice: direct / supporting /
+  unrelated / not enough information).
+- **would_have**, from [`config/appe-thresholds.json`](config/appe-thresholds.json) (provisional
+  values from the brief, `validated: false`): necessity < 0.40 or nature "unrelated" → `block`;
+  necessity < 0.75 or duplicate ≥ 0.50 → `ask_human`; UNAVAILABLE → `ask_human`; else `none`.
+- **Ledger:** `spend_guard_review` next to each task payment decision: probabilities, nature,
+  would_have and its reason codes (`SPEND_GUARD_UNNECESSARY` / `_DUPLICATE` / `_UNAVAILABLE`),
+  the actual decision, `jev_model`, `policy_version` (version + hash of the thresholds file).
+- **Not asked** when the fixed rules already block (principle 7): no task, budget or Allowance
+  problem, allowlist or limits. It runs in parallel with Intercepta, so it adds little wait.
+- A probability is Jev's answer distribution, not the chance that a payment is safe.
+
+`npm run jev-probe` makes one live call with a synthetic state and checks the response shape.
+`npm run why` and the agent's output show the shadow result per payment.
+
+| Spend Guard part | Status |
+|---|---|
+| Jev layer, Spend Guard shadow, ledger | **Verified offline**: `test/jev.test.ts` (fake API following the SDK contract), Spend Guard tests in `test/tasks.integration.test.ts`. |
+| A live call to Jev | **Not yet run.** api.typesafe.ai and docs.typesafe.ai are unreachable from the build environment; the contract was taken from the official SDK's source. |
+
 ## Where the partner APIs are called
 
 ### Intercepta (required link)
@@ -241,7 +285,7 @@ Official reference: https://docs.web3antivirus.io/reference/
 | Scan Message `POST …/analysis/signature` (the EIP-3009 TransferWithAuthorization about to be signed, as EIP-712) | [`lib/intercepta.ts#L230`](lib/intercepta.ts#L230), verdict from `riskGroup` [L210](lib/intercepta.ts#L210) |
 | Testnet payTo → mainnet screening address | [`lib/policy.ts#L117`](lib/policy.ts#L117) |
 | Screening on Base mainnet + aggregation | [`lib/screening.ts#L111`](lib/screening.ts#L111) |
-| Called from the gate, before any signing | [`lib/gate.ts#L183`](lib/gate.ts#L183) |
+| Called from the gate, before any signing | [`lib/gate.ts#L192`](lib/gate.ts#L192) |
 
 ### How Intercepta results are judged
 
@@ -301,7 +345,7 @@ The API key is not saved.
 | RP-signed request (`signRequest`, computed locally, TTL) | [`lib/world.ts#L85`](lib/world.ts#L85) |
 | **Server-side verification** | [`lib/world.ts#L130`](lib/world.ts#L130): nonce / action / environment ([L135](lib/world.ts#L135)), signal = this payment ([L144](lib/world.ts#L144)), World Developer API `POST https://developer.world.org/api/v4/verify/{rp_id}` ([L155](lib/world.ts#L155)), owner nullifier ([L185](lib/world.ts#L185)) |
 | Sandbox/staging API key (optional, never sent for production) | [`lib/world.ts#L30`](lib/world.ts#L30), 401/403 diagnosis [L168](lib/world.ts#L168) |
-| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L434`](lib/gate.ts#L434), [L469](lib/gate.ts#L469), [L416](lib/gate.ts#L416), [L475](lib/gate.ts#L475) |
+| Four exits: approve / reject / expire / cancel | [`lib/gate.ts#L486`](lib/gate.ts#L486), [L521](lib/gate.ts#L521), [L468](lib/gate.ts#L468), [L527](lib/gate.ts#L527) |
 | IDKit widget (relays the proof only) | [`app/approve/[id]/approval-client.tsx#L101`](app/approve/%5Bid%5D/approval-client.tsx#L101) |
 
 The browser only passes the IDKit result along. A payment is signed only after the server has
