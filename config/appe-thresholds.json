@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Agent Procurement Policy Engine thresholds (spec/07). Read by lib/appe.ts; nothing is hard-coded.",
+    "PROVISIONAL. The numbers below are the brief's starting values (spec/07 section 3-5), not measured ones. They are used only to compute would_have in shadow mode, which never changes a payment.",
+    "They become real only after the section 4 check: at least 30 shadow reviews, both needed and unneeded purchases, compared with the owner's own judgement. Record the result and the reasoning here, then set validated to true.",
+    "Jev probabilities are the model's answer distribution, not the probability that a payment is safe (principle 3).",
+    "jev.model: jev-latest is a moving alias. After the first live call, pin the model string it returns (npm run jev-probe prints it)."
+  ],
+  "version": "2026-10-03-provisional",
+  "validated": false,
+  "jev": {
+    "model": "jev-latest",
+    "timeout_ms": 3000,
+    "retries": 1,
+    "cache_minutes": 10
+  },
+  "spend_guard": {
+    "mode": "shadow",
+    "history_limit": 20,
+    "description_max_chars": 2000,
+    "necessity_pass": 0.75,
+    "necessity_block": 0.4,
+    "duplicate_ask": 0.5
+  }
+}
