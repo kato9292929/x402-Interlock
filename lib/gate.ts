@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { x402HTTPClient, x402Client } from "@x402/core/client";
 import type { PaymentRequired, PaymentRequirements } from "@x402/core/types";
-import { fromAtomic } from "./amount";
+import { fromAtomic, toAtomic } from "./amount";
 import { Ledger, type LedgerEvent } from "./ledger";
 import {
   evaluatePolicy,
@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { isActionType, loadActionPolicies, type ActionPolicy, type ActionType } from "./actions";
 import { deliver, isChannel, type Channel } from "./inbox";
 import { detectDisclosure, type Detection } from "./protect";
+import { loadThresholds, spendGuardShadow, type SpendGuardReview } from "./appe";
 import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
 import { isSolanaNetwork } from "./solana/config";
@@ -54,6 +55,8 @@ export interface GateView {
   action_type?: ActionType;
   notify?: boolean;
   result?: { http_status: number; body: unknown; settlement?: unknown };
+  /** Spend Guard in shadow mode: what it would have done. It did not change this decision. */
+  spend_guard?: Pick<SpendGuardReview, "mode" | "would_have" | "would_have_reasons" | "necessity_prob" | "duplicate_prob" | "nature" | "jev_model" | "jev_status" | "jev_reason">;
   /** For a message sent through the gate: what the gate found in it (no matched values). */
   detected?: Detection[];
   message_id?: string;
@@ -163,6 +166,7 @@ export async function evaluate(input: {
   // Allowance) and to any payment that names a task. The legacy Base path without a task is
   // unchanged. Steps 1-3 need no network; 4-5 read the Allowance from chain right now.
   const onSolana = !!target && isSolanaNetwork(target.network);
+  let task: ReturnType<typeof checkTask>["task"];
   if (onSolana || task_id !== undefined) {
     const blockEarly = (reason: ReasonCode, extra: Record<string, unknown> = {}): GateView => {
       l.append(decision_id, "gate_decision", { task_id: task_id ?? null, decision: "BLOCK", reasons: [reason], selected: null, ...extra });
@@ -175,7 +179,12 @@ export async function evaluate(input: {
     if (actionPolicy === "deny") return blockEarly("ACTION_DENIED", { action_type: "pay", action_policy: actionPolicy });
     const a = await checkAllowance(t.task!, BigInt(target.amount), { decision_id, phase: "evaluate" }, now);
     if (!a.ok) return blockEarly(a.reason);
+    task = t.task;
   }
+
+  // Spend Guard (spec/07), shadow mode: asked in parallel with screening, recorded next to the
+  // decision, never applied. Skipped when the fixed rules already block (principle 7).
+  const spendGuard = task && pre.decision !== "BLOCK" ? startSpendGuard(task, input.url, paymentRequired, BigInt(target.amount), policy.token_decimals, l.readAll()) : undefined;
 
   const payToMainnet = mainnetScreeningAddress(policy, target.payTo as TestnetAddress);
   // Scan Message needs an EVM `from`; it does not apply on Solana (lib/screening.ts).
@@ -219,10 +228,11 @@ export async function evaluate(input: {
     policy,
   });
   savePending(decision_id, { kind: "pay", task_id, paymentRequired, url: input.url, run_id, purpose: input.purpose, result, selected });
+  const sg = spendGuard ? await recordSpendGuard(decision_id, task!.task_id, input.url, target.amount, result.decision, spendGuard) : undefined;
 
   if (result.decision === "BLOCK" || !selected) {
     l.append(decision_id, "payment_result", { task_id: task_id ?? null, status: "NOT_EXECUTED", run_id, resource: input.url, reason: "BLOCK" });
-    return { decision_id, decision: result.decision, reasons: result.reasons, status: "BLOCKED", task_id, screening };
+    return { decision_id, decision: result.decision, reasons: result.reasons, status: "BLOCKED", task_id, screening, spend_guard: sg };
   }
 
   if (result.decision === "ASK_HUMAN") {
@@ -255,10 +265,50 @@ export async function evaluate(input: {
       approval_url: `${input.baseUrl}/approve/${decision_id}`,
       task_id,
       screening,
+      spend_guard: sg,
     };
   }
 
-  return { ...(await execute(decision_id)), screening };
+  return { ...(await execute(decision_id)), screening, spend_guard: sg };
+}
+
+function startSpendGuard(
+  task: NonNullable<ReturnType<typeof checkTask>["task"]>,
+  url: string,
+  paymentRequired: PaymentRequired,
+  amount: bigint,
+  decimals: number,
+  all: LedgerEvent[],
+): Promise<SpendGuardReview> | undefined {
+  let t;
+  try {
+    t = loadThresholds();
+  } catch (e) {
+    console.log(`[spend-guard] thresholds not loaded: ${(e as Error).message}`);
+    return undefined;
+  }
+  if (t.spend_guard.mode === "off") return undefined;
+  const description = (paymentRequired.resource as { description?: unknown } | undefined)?.description;
+  return spendGuardShadow(
+    {
+      task: { task_id: task.task_id, purpose: task.purpose, budget_atomic: toAtomic(task.budget.amount, decimals) },
+      candidate: { url, description: typeof description === "string" ? description : null, amount_atomic: amount },
+      ledger: all,
+      decimals,
+    },
+    t,
+  );
+}
+
+async function recordSpendGuard(decision_id: string, task_id: string, url: string, amount: string, actual: Decision, p: Promise<SpendGuardReview>) {
+  const r = await p;
+  ledger().append(decision_id, "spend_guard_review", { task_id, url, amount, actual_decision: actual, ...r });
+  console.log(
+    `[spend-guard] ${decision_id} shadow would_have=${r.would_have}${r.would_have_reasons.length ? ` (${r.would_have_reasons.join(", ")})` : ""} ` +
+      (r.jev_status === "OK" ? `necessity=${r.necessity_prob} duplicate=${r.duplicate_prob} nature=${r.nature} model=${r.jev_model}` : `UNAVAILABLE: ${r.jev_reason}`),
+  );
+  const { mode, would_have, would_have_reasons, necessity_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason } = r;
+  return { mode, would_have, would_have_reasons, necessity_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason };
 }
 
 function screeningFromAddressOrUndefined(): string | undefined {
@@ -369,6 +419,8 @@ async function execute(decision_id: string): Promise<GateView> {
     run_id: p.run_id,
     resource: p.url,
     pull_tx: pull_tx ?? null,
+    // An identifier for the data obtained (Spend Guard history), never the data itself.
+    body_sha256: status === "PAID" && out?.body != null ? createHash("sha256").update(JSON.stringify(out.body)).digest("hex") : null,
     amount: p.selected.amount,
     payTo: p.selected.payTo,
     capped: p.result.reasons.includes("PER_PAYMENT_LIMIT_CAPPED"),
