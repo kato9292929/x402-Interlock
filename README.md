@@ -267,7 +267,7 @@ built yet.
 | Spend Guard part | Status |
 |---|---|
 | Jev layer, Spend Guard shadow, ledger | **Verified offline**: `test/jev.test.ts` (fake API following the SDK contract), Spend Guard tests in `test/tasks.integration.test.ts`. |
-| A live call to Jev | **Not yet run.** api.typesafe.ai and docs.typesafe.ai are unreachable from the build environment; the contract was taken from the official SDK's source. |
+| A live call to Jev | **Live (2026-10-03)**, `npm run jev-probe` on the owner's Mac: HTTP 200 in 403 ms, all three answer shapes (`noul`, `choice`, `score`) as the SDK documents, model returned `jev-1.13.0`, now pinned in `config/appe-thresholds.json` (request and expected model). Spend Guard on devnet: **not yet run.** |
 
 ## Where the partner APIs are called
 
