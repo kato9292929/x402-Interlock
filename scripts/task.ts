@@ -128,7 +128,15 @@ async function setEnv(name: string | undefined) {
   const value = (await rl.question(`${name}: `)).trim();
   rl.close();
   if (!value) throw new SolanaSetupError("empty value; nothing written");
-  if (/\s/.test(value)) throw new SolanaSetupError("the value contains whitespace; nothing written");
+  if (/\s/.test(value)) {
+    // Say what the pasted text looked like without echoing the secret: the pieces' lengths, and
+    // the first piece only when it is a well-known prefix rather than part of the key.
+    const parts = value.split(/\s+/);
+    const prefix = /^(bearer|authorization:?|key:?|api[-_]?key:?)$/i.test(parts[0]) || /^[A-Z][A-Z0-9_]*=$/.test(parts[0]) ? ` It starts with "${parts[0]}", which is not part of the key.` : "";
+    throw new SolanaSetupError(
+      `the value contains whitespace (${parts.length} pieces, lengths ${parts.map((x) => x.length).join(", ")}); nothing written.${prefix} Copy only the key itself (the console's Copy button), then run this again.`,
+    );
+  }
   const envText = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, "utf8") : "";
   let next: string;
   try {
