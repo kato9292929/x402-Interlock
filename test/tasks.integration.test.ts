@@ -202,7 +202,7 @@ before(async () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
-          model: "jev-test-1",
+          model: "jev-1.13.0",
           answers: {
             necessity: { type: "noul", noul: related ? 0.9 : 0.1 },
             duplicate: { type: "noul", noul: dup ? 0.8 : 0.05 },
@@ -557,8 +557,8 @@ test("shadow: a review is recorded with the model and policy version, and the pa
   const r = review(v.decision_id)!;
   assert.equal(r.mode, "shadow");
   assert.equal(r.jev_status, "OK");
-  assert.equal(r.jev_model, "jev-test-1");
-  assert.match(String(r.policy_version), /^2026-10-03-provisional#[0-9a-f]{12}$/);
+  assert.equal(r.jev_model, "jev-1.13.0");
+  assert.match(String(r.policy_version), /^2026-10-03-provisional-jev-1\.13\.0#[0-9a-f]{12}$/);
   assert.equal(r.would_have, "none");
   assert.equal(r.actual_decision, "PAY");
   assert.equal(typeof r.necessity_prob, "number");

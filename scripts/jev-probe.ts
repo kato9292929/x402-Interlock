@@ -28,7 +28,7 @@ async function main() {
   const client = new TypeSafeClient({ baseURL: process.env.TYPESAFE_BASE_URL || undefined, defaultModel: t.jev.model, logLevel: "off", timeout: 10_000, retry: { maxRetries: 0 } });
   console.log(`POST ${client.baseURL}/v1/systemone  model=${t.jev.model}`);
   const started = Date.now();
-  const { data, response, requestId } = await client.systemOne({ state, questions }).withResponse();
+  const { data, response, requestId } = await client.systemOne({ state, questions, model: t.jev.model }).withResponse();
   console.log(`HTTP ${response.status} in ${Date.now() - started} ms  request id ${requestId ?? "-"}`);
   console.log(JSON.stringify(data, null, 2));
   const answers = (data as { answers: Record<string, unknown> }).answers ?? {};
@@ -38,7 +38,11 @@ async function main() {
     console.log(`${name} (${q.type}): ${problem ?? "shape OK"}`);
     if (problem) ok = false;
   }
-  console.log(ok ? `\nshape OK. model returned: ${(data as { model: string }).model}  (pin this in config/appe-thresholds.json jev.model)` : "\nshape MISMATCH: paste this output");
+  const returned = (data as { model: string }).model;
+  console.log(ok ? `\nshape OK. model returned: ${returned}` : "\nshape MISMATCH: paste this output");
+  if (t.jev.expected_model) {
+    console.log(returned === t.jev.expected_model ? `matches the pinned model ${t.jev.expected_model}` : `DOES NOT match the pinned model ${t.jev.expected_model}: Spend Guard would record UNAVAILABLE`);
+  } else console.log("(pin this in config/appe-thresholds.json jev.model and jev.expected_model)");
   try {
     const models = await client.models.list();
     console.log("\nmodels available to this key:");

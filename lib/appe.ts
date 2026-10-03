@@ -14,7 +14,7 @@ import type { LedgerEvent } from "./ledger";
 export interface AppeThresholds {
   version: string;
   validated: boolean;
-  jev: { model: string; timeout_ms: number; retries: number; cache_minutes: number };
+  jev: { model: string; expected_model?: string; timeout_ms: number; retries: number; cache_minutes: number };
   spend_guard: {
     mode: "off" | "shadow";
     history_limit: number;
@@ -133,6 +133,7 @@ export async function spendGuardShadow(i: SpendGuardInput, t = loadThresholds())
   const state = spendGuardState(i, t);
   const r = await callJev(state, SPEND_GUARD_QUESTIONS, {
     model: t.jev.model,
+    expectedModel: t.jev.expected_model,
     timeoutMs: t.jev.timeout_ms,
     retries: t.jev.retries,
     cacheMs: t.jev.cache_minutes * 60_000,

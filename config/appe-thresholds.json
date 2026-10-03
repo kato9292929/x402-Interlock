@@ -4,12 +4,13 @@
     "PROVISIONAL. The numbers below are the brief's starting values (spec/07 section 3-5), not measured ones. They are used only to compute would_have in shadow mode, which never changes a payment.",
     "They become real only after the section 4 check: at least 30 shadow reviews, both needed and unneeded purchases, compared with the owner's own judgement. Record the result and the reasoning here, then set validated to true.",
     "Jev probabilities are the model's answer distribution, not the probability that a payment is safe (principle 3).",
-    "jev.model: jev-latest is a moving alias. After the first live call, pin the model string it returns (npm run jev-probe prints it)."
+    "jev.model / jev.expected_model: pinned 2026-10-03 after the first live call (npm run jev-probe on the owner's Mac: HTTP 200, all three answer shapes as the SDK documents, model returned jev-1.13.0). The key's model list shows only jev-latest and jev-preview, so whether jev-1.13.0 is accepted as a request name is checked by the next probe. Either way, an answer from any model other than expected_model is UNAVAILABLE, so a silent version change cannot enter the record."
   ],
-  "version": "2026-10-03-provisional",
+  "version": "2026-10-03-provisional-jev-1.13.0",
   "validated": false,
   "jev": {
-    "model": "jev-latest",
+    "model": "jev-1.13.0",
+    "expected_model": "jev-1.13.0",
     "timeout_ms": 3000,
     "retries": 1,
     "cache_minutes": 10

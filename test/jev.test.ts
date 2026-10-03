@@ -70,6 +70,15 @@ test("an answer that does not match its question is UNAVAILABLE", async () => {
   assert.match(String(checkAnswer(Q.need, { type: "noul", noul: 1.5 })), /not a probability/);
 });
 
+test("an answer from a model other than the pinned one is UNAVAILABLE", async () => {
+  clearJevCache();
+  reply = () => ({ status: 200, json: good });
+  const r = await callJev({ pin: 1 }, Q, { model: "jev-1.13.0", expectedModel: "jev-1.14.0" });
+  assert.equal(r.status, "UNAVAILABLE");
+  assert.match((r as { reason: string }).reason, /answered by jev-1\.13\.0, expected jev-1\.14\.0/);
+  assert.equal((await callJev({ pin: 2 }, Q, { expectedModel: "jev-1.13.0" })).status, "OK");
+});
+
 test("HTTP errors retry once, then UNAVAILABLE; a timeout is UNAVAILABLE", async () => {
   clearJevCache();
   const before = seen.length;

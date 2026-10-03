@@ -36,6 +36,8 @@ export interface JevOptions {
   model?: string;
   timeoutMs?: number;
   retries?: number;
+  /** The model string the answer must come from; any other is UNAVAILABLE (reproducibility). */
+  expectedModel?: string;
   /** Reuse an identical (model, state, questions) answer for this long. 0 = off. */
   cacheMs?: number;
 }
@@ -100,6 +102,7 @@ export async function callJev(state: Record<string, unknown>, questions: Questio
 
   const b = body as { model?: unknown; answers?: Record<string, unknown>; usage?: { input_tokens: number; output_tokens: number } } | null;
   if (!b || typeof b.model !== "string" || !b.model || !b.answers || typeof b.answers !== "object") return unavailable("response does not match the systemone schema");
+  if (opts.expectedModel && b.model !== opts.expectedModel) return unavailable(`answered by ${b.model}, expected ${opts.expectedModel}`);
   const answers: Record<string, JevAnswer> = {};
   for (const [name, q] of Object.entries(questions)) {
     const problem = checkAnswer(q, b.answers[name]);
