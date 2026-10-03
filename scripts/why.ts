@@ -59,5 +59,13 @@ if (sg) {
   else console.log(`    Jev UNAVAILABLE: ${sg.jev_reason}`);
   console.log(`    policy ${sg.policy_version}`);
 }
+const dr = first("delivery_review")?.data as
+  | { fields_ok: boolean; fields: { period: string; item_count: number | null; missing_fields: string[]; min_items_ok: boolean | null; status_ok: boolean; json: boolean }; body_size: number; latency_ms: number; jev_status: string; jev_model: string | null; jev_reason?: string; answers_prob: number | null; substance: string | null; substance_probabilities: Record<string, number> | null; fulfillment_score: number | null; policy_version: string }
+  | undefined;
+if (dr) {
+  console.log(`  delivery review (record only): fields_ok ${dr.fields_ok}  period ${dr.fields.period}  items ${dr.fields.item_count}  missing [${dr.fields.missing_fields.join(", ")}]  ${dr.body_size} bytes  ${dr.latency_ms} ms`);
+  if (dr.jev_status === "OK") console.log(`    answers ${dr.answers_prob}  substance ${dr.substance} ${JSON.stringify(dr.substance_probabilities)}  fulfillment ${dr.fulfillment_score}/10  model ${dr.jev_model}`);
+  else console.log(`    Jev UNAVAILABLE: ${dr.jev_reason}`);
+}
 const r = first("payment_result")?.data as { status?: string; reason?: string } | undefined;
 if (r) console.log(`  payment: ${r.status}${r.reason ? ` (${r.reason})` : ""}`);

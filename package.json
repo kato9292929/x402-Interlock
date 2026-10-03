@@ -15,7 +15,8 @@
     "test:devnet": "SOLANA_DEVNET_TEST=1 node --env-file-if-exists=.env.local --import tsx --test test/solana.devnet.test.ts",
     "why": "tsx scripts/why.ts",
     "jev-probe": "tsx --env-file-if-exists=.env.local scripts/jev-probe.ts",
-    "spend-guard-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-run.ts"
+    "spend-guard-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-run.ts",
+    "delivery-review-run": "tsx --env-file-if-exists=.env.local scripts/delivery-review-run.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",
