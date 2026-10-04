@@ -17,7 +17,10 @@
     "jev-probe": "tsx --env-file-if-exists=.env.local scripts/jev-probe.ts",
     "spend-guard-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-run.ts",
     "delivery-review-run": "tsx --env-file-if-exists=.env.local scripts/delivery-review-run.ts",
-    "jev-probe-delivery": "tsx --env-file-if-exists=.env.local scripts/jev-probe-delivery.ts"
+    "jev-probe-delivery": "tsx --env-file-if-exists=.env.local scripts/jev-probe-delivery.ts",
+    "appe-eval-run": "tsx --env-file-if-exists=.env.local scripts/appe-eval-run.ts",
+    "appe-label": "tsx --env-file-if-exists=.env.local scripts/appe-label.ts",
+    "appe-metrics": "tsx --env-file-if-exists=.env.local scripts/appe-metrics.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",
