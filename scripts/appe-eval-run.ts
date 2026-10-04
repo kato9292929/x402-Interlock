@@ -20,7 +20,11 @@ const why = (e: unknown) => {
   return `${err.message}${err.cause ? ` (${err.cause.code ?? ""} ${err.cause.message ?? ""})` : ""}`;
 };
 
-/** One request, retried once after a pause if the connection itself fails. */
+/**
+ * One request, retried once after a pause if the connection itself fails. Only for requests that
+ * are safe to repeat (GET, cancel). Never for /api/gate/evaluate: a timed-out evaluate may still
+ * be paying on the server, and repeating it can pay twice (spec/07 principle 6).
+ */
 async function call(url: string, init?: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init);
@@ -53,9 +57,12 @@ async function main() {
       try {
         first = await call(url);
         if (first.status !== 402) throw new Error(`seller answered ${first.status}, expected 402`);
-        r = await call(`${BASE}/api/gate/evaluate`, { method: "POST", headers: agent, body: JSON.stringify({ task_id: task.task_id, action_type: "pay", payload: { url, purpose: item } }) });
+        r = await fetch(`${BASE}/api/gate/evaluate`, { method: "POST", headers: agent, body: JSON.stringify({ task_id: task.task_id, action_type: "pay", payload: { url, purpose: item } }) });
       } catch (e) {
-        throw new Error(`[${t.key}] ${item}: ${why(e)}\nCheck the npm run dev terminal for an error, restart it if it stopped, then continue with: npm run appe-eval-run -- --from ${t.key}`);
+        throw new Error(
+          `[${t.key}] ${item}: ${why(e)}\nNot retried: the server may still be paying for it. Check the npm run dev terminal ` +
+            `([pay] / [solana] lines), restart it if it stopped, then continue with: npm run appe-eval-run -- --from ${t.key}`,
+        );
       }
       const v = await r.json();
       if (!r.ok) throw new Error(`evaluate ${item}: HTTP ${r.status} ${JSON.stringify(v)}`);
