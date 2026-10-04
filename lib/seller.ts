@@ -31,13 +31,18 @@ function resourceServer(network: `${string}:${string}`, facilitatorUrl: string) 
 
 const handlers = new Map<string, (req: NextRequest) => Promise<NextResponse>>();
 
+type Route = PriceConfig["routes"][string];
+
 /** Built on first request so a missing env var fails that request, not the build. */
 export function sellerRoute(name: string, content: (req: NextRequest) => unknown) {
+  return (req: NextRequest) => sellerHandler(name, cfg().routes[name], content)(req);
+}
+
+export function sellerHandler(name: string, route: Route, content: (req: NextRequest) => unknown) {
   return async (req: NextRequest) => {
     let h = handlers.get(name);
     if (!h) {
       const c = cfg();
-      const route = c.routes[name];
       const payTo = process.env[route.payTo_env];
       if (!payTo) return NextResponse.json({ error: `${route.payTo_env} not set` }, { status: 500 });
       h = withX402(
@@ -53,4 +58,17 @@ export function sellerRoute(name: string, content: (req: NextRequest) => unknown
     }
     return h(req);
   };
+}
+
+interface CatalogItem {
+  price: string;
+  description: string;
+  body: unknown;
+}
+
+/** An item of config/eval-catalog.json, or undefined. */
+export function catalogItem(slug: string): CatalogItem | undefined {
+  if (!/^[a-z0-9-]{1,60}$/.test(slug)) return undefined;
+  const items = (JSON.parse(readFileSync(path.join(process.cwd(), "config", "eval-catalog.json"), "utf8")) as { items: Record<string, CatalogItem> }).items;
+  return Object.hasOwn(items, slug) ? items[slug] : undefined;
 }
