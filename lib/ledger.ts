@@ -12,6 +12,10 @@ export type LedgerEventType =
   | "task_closed"
   | "action_judged"
   | "action_sent"
+  | "spend_guard_review"
+  | "delivery_review"
+  | "owner_label"
+  | "owner_task_label"
   | "allowance_checked";
 
 export interface LedgerEvent {

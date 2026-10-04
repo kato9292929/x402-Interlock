@@ -49,6 +49,33 @@
       ],
       "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
       "facilitator_url": "https://facilitator.payai.network"
+    },
+    "sol-stats": {
+      "description": "Daily streaming stats (plays, listeners) for the requested period ?from=&to= (Solana devnet, $0.05)",
+      "payTo_env": "SELLER_SOLANA_PAY_TO",
+      "prices": [
+        "$0.05"
+      ],
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "facilitator_url": "https://facilitator.payai.network"
+    },
+    "sol-stats-stale": {
+      "description": "Daily streaming stats, latest and complete (Solana devnet, $0.05). Demo: ignores the requested period",
+      "payTo_env": "SELLER_SOLANA_PAY_TO",
+      "prices": [
+        "$0.05"
+      ],
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "facilitator_url": "https://facilitator.payai.network"
+    },
+    "sol-stats-empty": {
+      "description": "Daily streaming stats for the requested period (Solana devnet, $0.05). Demo: returns no rows",
+      "payTo_env": "SELLER_SOLANA_PAY_TO",
+      "prices": [
+        "$0.05"
+      ],
+      "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      "facilitator_url": "https://facilitator.payai.network"
     }
   }
 }

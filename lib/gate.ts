@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { x402HTTPClient, x402Client } from "@x402/core/client";
 import type { PaymentRequired, PaymentRequirements } from "@x402/core/types";
-import { fromAtomic } from "./amount";
+import { fromAtomic, toAtomic } from "./amount";
 import { Ledger, type LedgerEvent } from "./ledger";
 import {
   evaluatePolicy,
@@ -19,6 +19,8 @@ import { createHash } from "node:crypto";
 import { isActionType, loadActionPolicies, type ActionPolicy, type ActionType } from "./actions";
 import { deliver, isChannel, type Channel } from "./inbox";
 import { detectDisclosure, type Detection } from "./protect";
+import { loadThresholds, spendGuardShadow, type SpendGuardReview } from "./appe";
+import { bodySha256, deliveryReview, type DeliveryReview, type Requirements } from "./delivery";
 import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
 import { isSolanaNetwork } from "./solana/config";
@@ -54,6 +56,10 @@ export interface GateView {
   action_type?: ActionType;
   notify?: boolean;
   result?: { http_status: number; body: unknown; settlement?: unknown };
+  /** Delivery Review of a paid purchase: what came back, against what was asked. Record only. */
+  delivery_review?: Pick<DeliveryReview, "fields_ok" | "answers_prob" | "substance" | "fulfillment_score" | "jev_model" | "jev_status" | "jev_reason"> & { period: string; item_count: number | null; missing_fields: string[] };
+  /** Spend Guard in shadow mode: what it would have done. It did not change this decision. */
+  spend_guard?: Pick<SpendGuardReview, "mode" | "would_have" | "would_have_reasons" | "necessity_prob" | "duplicate_prob" | "nature" | "jev_model" | "jev_status" | "jev_reason">;
   /** For a message sent through the gate: what the gate found in it (no matched values). */
   detected?: Detection[];
   message_id?: string;
@@ -129,6 +135,8 @@ export async function evaluate(input: {
   purpose: string;
   run_id?: string;
   task_id?: string;
+  /** What the purchase must deliver (Delivery Review compares the response with it). */
+  requirements?: Requirements;
   baseUrl: string;
 }): Promise<GateView> {
   const l = ledger();
@@ -146,6 +154,7 @@ export async function evaluate(input: {
     run_id,
     resource: input.url,
     purpose: input.purpose,
+    requirements: input.requirements ?? null,
     x402Version: paymentRequired.x402Version,
     accepts: paymentRequired.accepts,
   });
@@ -163,6 +172,7 @@ export async function evaluate(input: {
   // Allowance) and to any payment that names a task. The legacy Base path without a task is
   // unchanged. Steps 1-3 need no network; 4-5 read the Allowance from chain right now.
   const onSolana = !!target && isSolanaNetwork(target.network);
+  let task: ReturnType<typeof checkTask>["task"];
   if (onSolana || task_id !== undefined) {
     const blockEarly = (reason: ReasonCode, extra: Record<string, unknown> = {}): GateView => {
       l.append(decision_id, "gate_decision", { task_id: task_id ?? null, decision: "BLOCK", reasons: [reason], selected: null, ...extra });
@@ -175,7 +185,12 @@ export async function evaluate(input: {
     if (actionPolicy === "deny") return blockEarly("ACTION_DENIED", { action_type: "pay", action_policy: actionPolicy });
     const a = await checkAllowance(t.task!, BigInt(target.amount), { decision_id, phase: "evaluate" }, now);
     if (!a.ok) return blockEarly(a.reason);
+    task = t.task;
   }
+
+  // Spend Guard (spec/07), shadow mode: asked in parallel with screening, recorded next to the
+  // decision, never applied. Skipped when the fixed rules already block (principle 7).
+  const spendGuard = task && pre.decision !== "BLOCK" ? startSpendGuard(task, input.url, paymentRequired, BigInt(target.amount), policy.token_decimals, l.readAll()) : undefined;
 
   const payToMainnet = mainnetScreeningAddress(policy, target.payTo as TestnetAddress);
   // Scan Message needs an EVM `from`; it does not apply on Solana (lib/screening.ts).
@@ -218,11 +233,12 @@ export async function evaluate(input: {
     notify,
     policy,
   });
-  savePending(decision_id, { kind: "pay", task_id, paymentRequired, url: input.url, run_id, purpose: input.purpose, result, selected });
+  savePending(decision_id, { kind: "pay", task_id, paymentRequired, url: input.url, run_id, purpose: input.purpose, requirements: input.requirements, result, selected });
+  const sg = spendGuard ? await recordSpendGuard(decision_id, task!.task_id, input.url, target.amount, result.decision, spendGuard) : undefined;
 
   if (result.decision === "BLOCK" || !selected) {
     l.append(decision_id, "payment_result", { task_id: task_id ?? null, status: "NOT_EXECUTED", run_id, resource: input.url, reason: "BLOCK" });
-    return { decision_id, decision: result.decision, reasons: result.reasons, status: "BLOCKED", task_id, screening };
+    return { decision_id, decision: result.decision, reasons: result.reasons, status: "BLOCKED", task_id, screening, spend_guard: sg };
   }
 
   if (result.decision === "ASK_HUMAN") {
@@ -255,10 +271,67 @@ export async function evaluate(input: {
       approval_url: `${input.baseUrl}/approve/${decision_id}`,
       task_id,
       screening,
+      spend_guard: sg,
     };
   }
 
-  return { ...(await execute(decision_id)), screening };
+  return { ...(await execute(decision_id)), screening, spend_guard: sg };
+}
+
+function deliverySummary(events: LedgerEvent[]): GateView["delivery_review"] {
+  const d = events.find((e) => e.event_type === "delivery_review")?.data as (DeliveryReview & Record<string, unknown>) | undefined;
+  if (!d) return undefined;
+  return {
+    fields_ok: d.fields_ok,
+    period: d.fields.period,
+    item_count: d.fields.item_count,
+    missing_fields: d.fields.missing_fields,
+    answers_prob: d.answers_prob,
+    substance: d.substance,
+    fulfillment_score: d.fulfillment_score,
+    jev_model: d.jev_model,
+    jev_status: d.jev_status,
+    jev_reason: d.jev_reason,
+  };
+}
+
+function startSpendGuard(
+  task: NonNullable<ReturnType<typeof checkTask>["task"]>,
+  url: string,
+  paymentRequired: PaymentRequired,
+  amount: bigint,
+  decimals: number,
+  all: LedgerEvent[],
+): Promise<SpendGuardReview> | undefined {
+  let t;
+  try {
+    t = loadThresholds();
+  } catch (e) {
+    console.log(`[spend-guard] thresholds not loaded: ${(e as Error).message}`);
+    return undefined;
+  }
+  if (t.spend_guard.mode === "off") return undefined;
+  const description = (paymentRequired.resource as { description?: unknown } | undefined)?.description;
+  return spendGuardShadow(
+    {
+      task: { task_id: task.task_id, purpose: task.purpose, budget_atomic: toAtomic(task.budget.amount, decimals) },
+      candidate: { url, description: typeof description === "string" ? description : null, amount_atomic: amount },
+      ledger: all,
+      decimals,
+    },
+    t,
+  );
+}
+
+async function recordSpendGuard(decision_id: string, task_id: string, url: string, amount: string, actual: Decision, p: Promise<SpendGuardReview>) {
+  const r = await p;
+  ledger().append(decision_id, "spend_guard_review", { task_id, url, amount, actual_decision: actual, ...r });
+  console.log(
+    `[spend-guard] ${decision_id} shadow would_have=${r.would_have}${r.would_have_reasons.length ? ` (${r.would_have_reasons.join(", ")})` : ""} ` +
+      (r.jev_status === "OK" ? `necessity=${r.necessity_prob} duplicate=${r.duplicate_prob} nature=${r.nature} model=${r.jev_model}` : `UNAVAILABLE: ${r.jev_reason}`),
+  );
+  const { mode, would_have, would_have_reasons, necessity_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason } = r;
+  return { mode, would_have, would_have_reasons, necessity_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason };
 }
 
 function screeningFromAddressOrUndefined(): string | undefined {
@@ -281,6 +354,7 @@ type Pending =
       url: string;
       run_id: string;
       purpose: string;
+      requirements?: Requirements;
       result: GateResult;
       selected?: PaymentRequirements;
     }
@@ -346,10 +420,20 @@ async function execute(decision_id: string): Promise<GateView> {
 
   let status: Status = "PAYMENT_FAILED";
   let out: GateView["result"];
+  let delivered: { text: string; latency_ms: number; status: number } | undefined;
   try {
     const payload = await signApproved(p.paymentRequired, p.selected);
+    const started = Date.now();
     const res = await fetch(p.url, { headers: http.encodePaymentSignatureHeader(payload), signal: AbortSignal.timeout(60_000) });
-    const body = await res.json().catch(() => null);
+    // Keep the exact bytes: Delivery Review hashes and measures them.
+    const text = await res.text().catch(() => "");
+    delivered = { text, latency_ms: Date.now() - started, status: res.status };
+    let body: unknown = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
     let settlement: unknown;
     try {
       settlement = http.getPaymentSettleResponse((n) => res.headers.get(n));
@@ -369,13 +453,69 @@ async function execute(decision_id: string): Promise<GateView> {
     run_id: p.run_id,
     resource: p.url,
     pull_tx: pull_tx ?? null,
+    // An identifier for the data obtained (Spend Guard history), never the data itself.
+    body_sha256: status === "PAID" && delivered ? bodySha256(delivered.text) : null,
     amount: p.selected.amount,
     payTo: p.selected.payTo,
     capped: p.result.reasons.includes("PER_PAYMENT_LIMIT_CAPPED"),
     http_status: out?.http_status,
     settlement: out?.settlement ?? null,
   });
+  if (status === "PAID" && delivered && p.task_id) await recordDelivery(decision_id, p, delivered, out?.settlement);
   return view(decision_id);
+}
+
+/**
+ * Delivery Review (spec/07 section 5): record whether what came back matches what was asked.
+ * Record only. A poor result never reverses the payment; it is evidence for later.
+ */
+async function recordDelivery(
+  decision_id: string,
+  p: Extract<Pending, { kind?: "pay" }>,
+  delivered: { text: string; latency_ms: number; status: number },
+  settlement: unknown,
+) {
+  let t;
+  try {
+    t = loadThresholds();
+  } catch (e) {
+    console.log(`[delivery-review] thresholds not loaded: ${(e as Error).message}`);
+    return;
+  }
+  if (t.delivery_review.mode === "off") return;
+  const task = checkTask(p.task_id).task;
+  const description = (p.paymentRequired.resource as { description?: unknown } | undefined)?.description;
+  let r: DeliveryReview;
+  try {
+    r = await deliveryReview(
+      {
+        purpose: task?.purpose ?? "",
+        agent_purpose: p.purpose,
+        requirements: p.requirements,
+        description: typeof description === "string" ? description : null,
+        status: delivered.status,
+        text: delivered.text,
+        latency_ms: delivered.latency_ms,
+      },
+      t,
+    );
+  } catch (e) {
+    console.log(`[delivery-review] ${decision_id} failed: ${(e as Error).message}`);
+    return;
+  }
+  const tx = (settlement as { transaction?: unknown } | undefined)?.transaction;
+  // The body itself is never written: only its hash, size and what the checks found.
+  ledger().append(decision_id, "delivery_review", {
+    task_id: p.task_id ?? null,
+    tx: typeof tx === "string" ? tx : null,
+    url: p.url,
+    amount: p.selected?.amount ?? null,
+    ...r,
+  });
+  console.log(
+    `[delivery-review] ${decision_id} fields_ok=${r.fields_ok} period=${r.fields.period} items=${r.fields.item_count} missing=[${r.fields.missing_fields.join(",")}] ` +
+      (r.jev_status === "OK" ? `answers=${r.answers_prob} substance=${r.substance} fulfillment=${r.fulfillment_score} model=${r.jev_model}` : `UNAVAILABLE: ${r.jev_reason}`),
+  );
 }
 
 function paidOrAttempted(events: LedgerEvent[]) {
@@ -523,6 +663,7 @@ export function view(decision_id: string, baseUrl?: string): GateView {
     notify: d.data.notify === true || undefined,
     result: res,
     detected: (action?.data.detected as Detection[] | undefined) ?? undefined,
+    delivery_review: deliverySummary(events),
     message_id: (sent?.data.message_id as string | undefined) ?? undefined,
   };
 }

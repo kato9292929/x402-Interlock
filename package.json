@@ -13,7 +13,14 @@
     "first-success": "tsx scripts/first-success.ts",
     "task": "tsx --env-file-if-exists=.env.local scripts/task.ts",
     "test:devnet": "SOLANA_DEVNET_TEST=1 node --env-file-if-exists=.env.local --import tsx --test test/solana.devnet.test.ts",
-    "why": "tsx scripts/why.ts"
+    "why": "tsx scripts/why.ts",
+    "jev-probe": "tsx --env-file-if-exists=.env.local scripts/jev-probe.ts",
+    "spend-guard-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-run.ts",
+    "delivery-review-run": "tsx --env-file-if-exists=.env.local scripts/delivery-review-run.ts",
+    "jev-probe-delivery": "tsx --env-file-if-exists=.env.local scripts/jev-probe-delivery.ts",
+    "appe-eval-run": "tsx --env-file-if-exists=.env.local scripts/appe-eval-run.ts",
+    "appe-label": "tsx --env-file-if-exists=.env.local scripts/appe-label.ts",
+    "appe-metrics": "tsx --env-file-if-exists=.env.local scripts/appe-metrics.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",
@@ -21,6 +28,7 @@
     "@solana/kit-plugin-rpc": "^0.15.0",
     "@solana/kit-plugin-signer": "^0.13.0",
     "@solana/subscriptions": "^0.5.0",
+    "@typesafe-ai/sdk": "^0.6.0",
     "@worldcoin/idkit": "^4.3.0",
     "@worldcoin/idkit-core": "^4.3.0",
     "@x402/core": "^2.27.0",

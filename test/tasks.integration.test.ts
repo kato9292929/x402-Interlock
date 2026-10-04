@@ -98,7 +98,10 @@ class FakeChain implements AllowanceChain {
 // ---------------------------------------------------------------------------
 
 let chain: FakeChain;
-let seller: Server, intercepta: Server, world: Server;
+let seller: Server, intercepta: Server, world: Server, typesafe: Server;
+let typesafeDown = false;
+const deliveryStates: { response: { body: string } }[] = [];
+const spendGuardStates: { task: { purpose: string }; candidate: { url: string }; history: { url: string }[] }[] = [];
 let sellerUrl = "";
 let SELLER_SOL = "";
 const paid: string[] = [];
@@ -156,13 +159,19 @@ before(async () => {
     ];
     const sig = req.headers["payment-signature"];
     if (!sig) {
-      res.writeHead(402, { "PAYMENT-REQUIRED": encodePaymentRequiredHeader({ x402Version: 2, resource: { url: sellerUrl + u.pathname + u.search }, accepts }) });
+      res.writeHead(402, { "PAYMENT-REQUIRED": encodePaymentRequiredHeader({ x402Version: 2, resource: { url: sellerUrl + u.pathname + u.search, description: "Stock clip for a music video" }, accepts }) });
       return res.end("{}");
     }
     const p = decodePaymentSignatureHeader(String(sig));
     paid.push(u.pathname + u.search);
     res.writeHead(200, { "content-type": "application/json", "PAYMENT-RESPONSE": encodePaymentResponseHeader({ success: true, transaction: "soltx", network: NETWORK, payer: chain.gate }) });
-    res.end(JSON.stringify({ served: u.pathname, amount: p.accepted.amount }));
+    const from = u.searchParams.get("from") ?? "2026-09-27";
+    const to = u.searchParams.get("to") ?? "2026-10-03";
+    const nonce = `body-nonce-${Math.random().toString(36).slice(2)}`;
+    if (u.pathname.includes("stats-stale")) return res.end(JSON.stringify({ nonce, period: { from: "2025-01-01", to: "2025-01-07" }, items: [{ date: "2025-01-01", plays: 100 }] }));
+    if (u.pathname.includes("stats-empty")) return res.end(JSON.stringify({ nonce, period: { from, to }, items: [] }));
+    if (u.pathname.includes("stats")) return res.end(JSON.stringify({ nonce, period: { from, to }, items: [{ date: from, plays: 1234, listeners: 321 }, { date: to, plays: 1500, listeners: 400 }] }));
+    res.end(JSON.stringify({ served: u.pathname, amount: p.accepted.amount, nonce }));
   });
   sellerUrl = await listen(seller);
 
@@ -182,6 +191,61 @@ before(async () => {
     });
   });
   process.env.INTERCEPTA_BASE_URL = await listen(intercepta);
+
+  // Stand-in for the TypeSafe API (Jev). It answers from the state like a judge would, so the
+  // tests can check what Interlock sends and records; it says nothing about Jev's real quality.
+  typesafe = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      if (typesafeDown) {
+        res.writeHead(503, { "content-type": "application/json" });
+        return res.end("{}");
+      }
+      const parsed = JSON.parse(raw) as { state: (typeof spendGuardStates)[number] & { candidate: { description: string | null } }; questions: Record<string, unknown> };
+      if (parsed.questions.substance) {
+        // Delivery Review questions: judge the body it was given.
+        const st = parsed.state as unknown as { response: { body: string } };
+        deliveryStates.push(st);
+        const empty = /\[\s*\]/.test(st.response.body);
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(
+          JSON.stringify({
+            model: "jev-1.13.0",
+            answers: {
+              answers: { type: "noul", noul: empty ? 0.05 : 0.9 },
+              substance: { type: "choice", choice: empty ? "empty" : "real_data", confidence: 0.8, probabilities: empty ? { empty: 0.9, real_data: 0.05, undeterminable: 0.05 } : { real_data: 0.9, empty: 0.05, undeterminable: 0.05 } },
+              fulfillment: { type: "score", score: empty ? 0.5 : 8.2, confidence: 0.6, legend: {}, probabilities: { "0": 0.1 } },
+            },
+            usage: { input_tokens: 50, output_tokens: 3 },
+          }),
+        );
+      }
+      const { state } = parsed;
+      spendGuardStates.push(state);
+      const related = /music video/i.test(state.task.purpose) && /clip|render/i.test(String(state.candidate.description));
+      const dup = state.history.some((h) => h.url === state.candidate.url);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          model: "jev-1.13.0",
+          answers: {
+            necessity: { type: "noul", noul: related ? 0.9 : 0.1 },
+            duplicate: { type: "noul", noul: dup ? 0.8 : 0.05 },
+            nature: {
+              type: "choice",
+              choice: related ? "direct" : "unrelated",
+              confidence: 0.7,
+              probabilities: related ? { direct: 0.85, supporting: 0.1, unrelated: 0.03, insufficient: 0.02 } : { direct: 0.02, supporting: 0.05, unrelated: 0.9, insufficient: 0.03 },
+            },
+          },
+          usage: { input_tokens: 100, output_tokens: 3 },
+        }),
+      );
+    });
+  });
+  process.env.TYPESAFE_BASE_URL = await listen(typesafe);
+  process.env.TYPESAFE_API_KEY = "typesafe-key-secret";
 
   world = createServer((req, res) => {
     let body = "";
@@ -206,6 +270,7 @@ after(() => {
   seller.close();
   intercepta.close();
   world.close();
+  typesafe.close();
   setAllowanceChain(undefined);
   setPaymentSignerForTests(undefined);
 });
@@ -502,6 +567,162 @@ test("actions on a closed task are blocked", async () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Spend Guard, shadow mode (spec/07 sections 3-1 to 3-4)
+// ---------------------------------------------------------------------------
+
+const freshJev = async () => (await import("../lib/jev")).clearJevCache(); // identical states are cached on purpose
+const review = (decision_id: string) => new Ledger().byDecision(decision_id).find((e) => e.event_type === "spend_guard_review")?.data;
+const openFor = async (purpose: string, amount = "1.00") =>
+  (await tasks()).openTask({ purpose, budget: { amount, asset: "USDC" }, expires_at: inAnHour() });
+
+test("shadow: a review is recorded with the model and policy version, and the payment still goes through", async () => {
+  await freshJev();
+  const t = await openTask("1.00");
+  const v = await pay(t.task_id);
+  assert.equal(v.status, "PAID");
+  const r = review(v.decision_id)!;
+  assert.equal(r.mode, "shadow");
+  assert.equal(r.jev_status, "OK");
+  assert.equal(r.jev_model, "jev-1.13.0");
+  assert.match(String(r.policy_version), /^2026-10-03-provisional-jev-1\.13\.0#[0-9a-f]{12}$/);
+  assert.equal(r.would_have, "none");
+  assert.equal(r.actual_decision, "PAY");
+  assert.equal(typeof r.necessity_prob, "number");
+  assert.equal(v.spend_guard?.would_have, "none");
+  // What Jev saw: the purpose and the seller's description as data; the URL up to the path.
+  const st = spendGuardStates.at(-1)!;
+  assert.equal(st.task.purpose, "Make one music video");
+  assert.ok(!st.candidate.url.includes("?"));
+});
+
+test("shadow: an unrelated purchase would have been blocked, but is paid (shadow never stops)", async () => {
+  await freshJev();
+  const t = await openFor("Prepare the quarterly tax filing");
+  const v = await pay(t.task_id);
+  assert.equal(v.status, "PAID");
+  const r = review(v.decision_id)!;
+  assert.equal(r.would_have, "block");
+  assert.deepEqual(r.would_have_reasons, ["SPEND_GUARD_UNNECESSARY"]);
+  assert.equal(r.nature, "unrelated");
+});
+
+test("shadow: the same target again in one task -> history carries it and duplicate_prob rises", async () => {
+  await freshJev();
+  const t = await openTask("1.00");
+  const first = review((await pay(t.task_id)).decision_id)!;
+  const second = review((await pay(t.task_id)).decision_id)!;
+  assert.equal(first.exact_repeat, false);
+  assert.equal(second.exact_repeat, true);
+  assert.equal(second.history_count, 1);
+  assert.ok(Number(second.duplicate_prob) > Number(first.duplicate_prob));
+  assert.equal(second.would_have, "ask_human");
+  assert.ok((second.would_have_reasons as string[]).includes("SPEND_GUARD_DUPLICATE"));
+  // The history holds a data identifier from the payment, not the data.
+  const st = spendGuardStates.at(-1)!;
+  assert.match(String((st.history[0] as unknown as { data_id: string }).data_id), /^[0-9a-f]{64}$/);
+});
+
+test("shadow: Jev down -> UNAVAILABLE recorded, would_have ask_human, the payment is not affected", async () => {
+  await freshJev();
+  const t = await openTask("1.00");
+  typesafeDown = true;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "PAID");
+    const r = review(v.decision_id)!;
+    assert.equal(r.jev_status, "UNAVAILABLE");
+    assert.equal(r.jev_model, null);
+    assert.equal(r.would_have, "ask_human");
+    assert.deepEqual(r.would_have_reasons, ["SPEND_GUARD_UNAVAILABLE"]);
+  } finally {
+    typesafeDown = false;
+  }
+});
+
+test("an existing BLOCK stays a BLOCK whatever Spend Guard says", async () => {
+  await freshJev();
+  const t = await openTask("1.00");
+  interceptaQuickScanStatus = 429;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "BLOCKED");
+    const r = review(v.decision_id)!;
+    assert.equal(r.would_have, "none"); // Jev found nothing wrong ...
+    assert.equal(r.actual_decision, "BLOCK"); // ... and the block stands.
+  } finally {
+    interceptaQuickScanStatus = 200;
+  }
+  // Budget used up: stopped by the chain before Spend Guard is even asked.
+  const small = await openTask("0.30");
+  await pay(small.task_id);
+  const v = await pay(small.task_id);
+  assert.deepEqual(v.reasons, ["ALLOWANCE_INSUFFICIENT"]);
+  assert.equal(review(v.decision_id), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Delivery Review (spec/07 section 5): record only
+// ---------------------------------------------------------------------------
+
+const REQ = { period: { from: "2026-09-27", to: "2026-10-03" }, required_fields: ["date", "plays", "listeners"], min_items: 1 };
+const buyStats = async (task_id: string, path: string) =>
+  (await gate()).evaluate({ url: `${sellerUrl}/${path}?from=2026-09-27&to=2026-10-03&n=${++buyN}`, purpose: "weekly stats", task_id, requirements: REQ, baseUrl: "http://x" });
+const delivery = (decision_id: string) => new Ledger().byDecision(decision_id).find((e) => e.event_type === "delivery_review")?.data;
+
+test("delivery: a good answer is recorded with fields_ok, model and policy version; no body in the ledger", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const v = await buyStats(t.task_id, "sol-stats");
+  assert.equal(v.status, "PAID");
+  const d = delivery(v.decision_id)!;
+  assert.equal(d.fields_ok, true);
+  assert.equal((d.fields as { period: string }).period, "match");
+  assert.equal((d.fields as { item_count: number }).item_count, 2);
+  assert.equal(d.substance, "real_data");
+  assert.equal(d.jev_model, "jev-1.13.0");
+  assert.match(String(d.policy_version), /#[0-9a-f]{12}$/);
+  assert.match(String(d.body_sha256), /^[0-9a-f]{64}$/);
+  assert.equal(v.delivery_review?.fields_ok, true);
+  // Jev saw the body; the ledger did not keep it.
+  const body = deliveryStates.at(-1)!.response.body;
+  const nonce = JSON.parse(body).nonce as string;
+  assert.ok(!readFileSync(new Ledger().file, "utf8").includes(nonce));
+});
+
+test("delivery: an empty array is judged empty, and the payment stays paid", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const v = await buyStats(t.task_id, "sol-stats-empty");
+  assert.equal(v.status, "PAID");
+  const d = delivery(v.decision_id)!;
+  assert.equal(d.substance, "empty");
+  assert.equal(d.fields_ok, false);
+  assert.equal((d.fields as { item_count: number }).item_count, 0);
+  assert.equal((d.fields as { min_items_ok: boolean }).min_items_ok, false);
+  const after = new Ledger().byDecision(v.decision_id);
+  assert.equal(after.filter((e) => e.event_type === "payment_result").length, 1);
+  assert.equal(after.find((e) => e.event_type === "payment_result")!.data.status, "PAID");
+});
+
+test("delivery: the wrong period and missing fields are caught by code (fields_ok)", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const v = await buyStats(t.task_id, "sol-stats-stale");
+  const d = delivery(v.decision_id)!;
+  assert.equal(d.fields_ok, false);
+  assert.equal((d.fields as { period: string }).period, "mismatch");
+  assert.deepEqual((d.fields as { missing_fields: string[] }).missing_fields, ["listeners"]);
+});
+
+test("delivery: not recorded for a payment that did not happen", async () => {
+  const small = await openTask("0.30");
+  await pay(small.task_id);
+  const v = await pay(small.task_id);
+  assert.equal(v.status, "BLOCKED");
+  assert.equal(delivery(v.decision_id), undefined);
+});
+
+// ---------------------------------------------------------------------------
 // messages sent through the gate (deterministic content check)
 // ---------------------------------------------------------------------------
 
@@ -609,7 +830,7 @@ test("ledger: new events are in the hash chain, task_id on payment events, no se
   const l = new Ledger();
   assert.equal(l.verify(), -1);
   const all = l.readAll();
-  for (const type of ["task_opened", "task_closed", "action_judged", "action_sent", "allowance_checked"]) {
+  for (const type of ["task_opened", "task_closed", "action_judged", "action_sent", "allowance_checked", "spend_guard_review", "delivery_review"]) {
     assert.ok(all.some((e) => e.event_type === type), type);
   }
   const taskIds = new Set(all.filter((e) => e.event_type === "task_opened").map((e) => e.decision_id));
@@ -624,6 +845,7 @@ test("ledger: new events are in the hash chain, task_id on payment events, no se
     "agent-token-secret",
     "owner-token-secret",
     "intercepta-key-secret",
+    "typesafe-key-secret",
     "1-2-3 Jingumae",
     "Hi, it's me",
     "神宮前",

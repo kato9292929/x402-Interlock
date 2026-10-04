@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Demo sellers for the spec/07 section 4 check. Each item is a paid x402 endpoint on Solana devnet at /api/seller/sol-catalog/<slug>, paid to SELLER_SOLANA_PAY_TO through PayAI.",
+    "Descriptions are what a seller would claim; some overclaim on purpose (principle 5). Bodies are small fixed demo data: the check is about whether to buy, not about the content."
+  ],
+  "items": {
+    "clip-city-night": { "price": "$0.03", "description": "Stock video clip: Tokyo city streets at night, 10 s, 4K, royalty free", "body": { "kind": "clip", "scene": "city at night", "seconds": 10 } },
+    "clip-beach-day": { "price": "$0.03", "description": "Stock video clip: sunny beach in daytime, 10 s, 4K, royalty free", "body": { "kind": "clip", "scene": "beach, daytime", "seconds": 10 } },
+    "render-minutes": { "price": "$0.04", "description": "Cloud GPU render minutes for video editing projects (5 minutes)", "body": { "kind": "render", "minutes": 5 } },
+    "music-track": { "price": "$0.03", "description": "Royalty-free background music track, 30 s, electronic", "body": { "kind": "audio", "seconds": 30 } },
+    "font-license": { "price": "$0.02", "description": "Display font license for titles in videos and posters", "body": { "kind": "license", "item": "display font" } },
+    "weather-tokyo": { "price": "$0.02", "description": "Tokyo 7-day weather forecast, hourly, latest and most accurate", "body": { "kind": "forecast", "city": "Tokyo", "days": 7 } },
+    "streaming-daily": { "price": "$0.04", "description": "Daily streaming stats (plays, listeners) for one artist, per day", "body": { "kind": "stats", "items": [{ "date": "2026-09-27", "plays": 1200, "listeners": 300 }] } },
+    "playlist-placements": { "price": "$0.03", "description": "Which editorial playlists currently include the artist's tracks", "body": { "kind": "playlists", "items": [{ "playlist": "Night Pop", "position": 12 }] } },
+    "competitor-stats": { "price": "$0.04", "description": "Streaming stats for similar artists, for benchmarking", "body": { "kind": "stats", "items": [{ "artist": "similar artist", "plays": 5400 }] } },
+    "fx-usdjpy-daily": { "price": "$0.02", "description": "USD/JPY daily exchange rates, last 90 days", "body": { "kind": "fx", "pair": "USD/JPY", "days": 90 } },
+    "venue-availability-shibuya": { "price": "$0.04", "description": "Event venue availability in Shibuya for a given date and capacity", "body": { "kind": "venues", "items": [{ "venue": "Hall A", "capacity": 100, "available": true }] } },
+    "venue-reviews": { "price": "$0.03", "description": "Guest reviews of event venues in Tokyo", "body": { "kind": "reviews", "items": [{ "venue": "Hall A", "stars": 4.2 }] } },
+    "catering-prices": { "price": "$0.03", "description": "Catering price list per guest, Tokyo, party menus", "body": { "kind": "prices", "per_guest_jpy": 3500 } },
+    "crypto-price-feed": { "price": "$0.02", "description": "Real-time crypto price feed, top 100 coins", "body": { "kind": "prices", "coins": 100 } },
+    "mt-translate": { "price": "$0.03", "description": "Machine translation, Japanese to English, up to 2,000 characters", "body": { "kind": "translation", "chars": 1800 } },
+    "music-glossary": { "price": "$0.02", "description": "Japanese-English glossary of music industry terms", "body": { "kind": "glossary", "entries": 400 } },
+    "holiday-calendar": { "price": "$0.02", "description": "Japanese public holiday calendar (also free from the government open data site)", "body": { "kind": "calendar", "year": 2026 } },
+    "eth-spot": { "price": "$0.02", "description": "ETH/USDC spot price, current", "body": { "kind": "price", "pair": "ETH/USDC" } },
+    "eth-ohlc-1y": { "price": "$0.04", "description": "ETH/USDC daily OHLC, last 365 days", "body": { "kind": "ohlc", "days": 365 } },
+    "crypto-news": { "price": "$0.02", "description": "Crypto news headlines, last 24 hours, the most complete source", "body": { "kind": "news", "items": 50 } },
+    "tax-rates-jp": { "price": "$0.03", "description": "Japanese consumption and withholding tax rates for royalties, current", "body": { "kind": "tax", "country": "JP" } },
+    "fx-quarterly-avg": { "price": "$0.02", "description": "Quarterly average exchange rates (USD/JPY, EUR/JPY) for accounting", "body": { "kind": "fx", "quarters": 4 } }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Agent Procurement Policy Engine thresholds (spec/07). Read by lib/appe.ts; nothing is hard-coded.",
+    "PROVISIONAL. The numbers below are the brief's starting values (spec/07 section 3-5), not measured ones. They are used only to compute would_have in shadow mode, which never changes a payment.",
+    "They become real only after the section 4 check: at least 30 shadow reviews, both needed and unneeded purchases, compared with the owner's own judgement. Record the result and the reasoning here, then set validated to true.",
+    "Jev probabilities are the model's answer distribution, not the probability that a payment is safe (principle 3).",
+    "jev.model / jev.expected_model: pinned 2026-10-03 after the first live call (npm run jev-probe on the owner's Mac: HTTP 200, all three answer shapes as the SDK documents, model returned jev-1.13.0). The key's model list shows only jev-latest and jev-preview, so whether jev-1.13.0 is accepted as a request name is checked by the next probe. Either way, an answer from any model other than expected_model is UNAVAILABLE, so a silent version change cannot enter the record.",
+    "delivery_review: record only (spec/07 section 5). It never refunds or reverses a payment and is not a seller score. body_max_bytes: how much of the purchased body Jev sees; the ledger keeps only its SHA-256 and size.",
+    "spend_guard.compare_necessity_wording: during the section 4 check, each purchase is also asked \"necessary or useful\" in a separate call and recorded as necessity_alt_prob; would_have still uses the current wording."
+  ],
+  "version": "2026-10-03-provisional-jev-1.13.0",
+  "validated": false,
+  "jev": {
+    "model": "jev-1.13.0",
+    "expected_model": "jev-1.13.0",
+    "timeout_ms": 3000,
+    "retries": 1,
+    "cache_minutes": 10
+  },
+  "spend_guard": {
+    "mode": "shadow",
+    "history_limit": 20,
+    "description_max_chars": 2000,
+    "necessity_pass": 0.75,
+    "necessity_block": 0.4,
+    "duplicate_ask": 0.5,
+    "compare_necessity_wording": true
+  },
+  "delivery_review": {
+    "mode": "record",
+    "body_max_bytes": 32768
+  }
+}

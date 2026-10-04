@@ -227,6 +227,91 @@ or with one word changed, and it is a new decision that needs a new approval.
 
 Avoid `!` inside the double-quoted `--body` in zsh (history expansion).
 
+## 5. Spend Guard in shadow mode (spec/07, stages 1–2)
+
+Shadow mode never stops or changes a payment; it records what it would have done.
+
+```bash
+npm ci
+npm run task -- set-env TYPESAFE_API_KEY
+npm run jev-probe
+```
+
+- `set-env` asks for the key at a prompt (paste it, Enter), writes it to `.env.local`, does not
+  print it, and refuses if the key is already there.
+- `jev-probe`: `HTTP 200`, the raw response, `shape OK` for `necessity (noul)`, `nature (choice)`
+  and `fit (score)`, and `model returned: jev-…`. Paste the output; that model string gets pinned
+  in `config/appe-thresholds.json`.
+
+Restart `npm run dev` (it reads `.env.local` at startup), then:
+
+```bash
+npm run task -- open --purpose "Make one music video" --budget 1.00 --expires 2026-10-13T00:00:00Z
+npm run agent -- sol-clip --task task_... --times 2
+npm run task -- open --purpose "Prepare the quarterly tax filing" --budget 0.30 --expires 2026-10-13T00:00:00Z
+npm run agent -- sol-clip --task task_...
+npm run why
+```
+
+Expected:
+- every purchase still pays (`PAID`) as before; each shows one more line,
+  `[gate]   spend guard (shadow): would_have …`
+- music-video task, purchase 1: necessity high, nature `direct`, would_have `none` (likely)
+- music-video task, purchase 2: the same clip endpoint is in `history`; duplicate higher than
+  purchase 1, would_have possibly `ask_human (SPEND_GUARD_DUPLICATE)`
+- tax-filing task: a stock video clip; necessity low or nature `unrelated` → would_have `block`, and
+  **it is still paid**
+- `npm run why`: the `spend guard` block with probabilities, model and policy version
+
+These are Jev's answers on real data, so the exact numbers are what we want to see, not a pass or
+fail. If Jev is unreachable, every line says `UNAVAILABLE` and would_have `ask_human`, and the
+payments still go through.
+
+## 6. Delivery Review (spec/07 stage 3)
+
+Record only: never reverses a payment. With `npm run dev` running in another terminal:
+
+```bash
+cd ~/x402-Interlock
+npm run delivery-review-run
+```
+
+It opens one task (0.30 USDC) and buys the same weekly stats from three demo sellers at 0.05 USDC
+each, stating what it needs (period 2026-09-27 to 2026-10-03; date, plays, listeners; ≥ 1 row):
+
+| Seller | Returns | Expected record |
+|---|---|---|
+| `sol-stats` | the requested period, all fields | `fields_ok true`, substance likely `real_data` |
+| `sol-stats-stale` | last year, a fixed value, no `listeners` | `fields_ok false`, period `mismatch`, missing `listeners` |
+| `sol-stats-empty` | no rows | `fields_ok false`, substance likely `empty` |
+
+It ends with `checks:` (`yes` / `NO`): all paid, empty seen as empty, period mismatch caught by
+code, no purchased body in the ledger, model and policy version recorded. Jev's numbers are what
+we want to see, not a pass or fail.
+
+## 7. Stage 4: Spend Guard against the owner's judgement (spec/07 section 4)
+
+Nothing is enforced in this stage. With `npm run dev` running in another terminal:
+
+```bash
+cd ~/x402-Interlock
+npm run appe-eval-run
+npm run appe-label
+npm run appe-metrics
+```
+
+1. `appe-eval-run` opens 6 tasks and makes 34 purchases (about 1 USDC in total; repeats within a
+   task go to the owner by the fixed 10-minute rule and are cancelled, so they cost nothing). Each
+   line shows Spend Guard's shadow verdict. `npm run appe-eval-run -- venue` reruns one task.
+2. `appe-label`: one purchase per screen line (task purpose, item, price, the seller's
+   description in one line). Press `1` needed, `2` not needed, `3` not sure, `q` to stop; run it
+   again to continue where you stopped. Jev's numbers appear after your key. When a task's
+   purchases are all labelled it asks whether the task's purpose was met (`1` / `2` / `3`).
+3. `appe-metrics`: the four metrics, ranges per label, and the rule table for both wordings.
+   It says "NOT ENOUGH" until 30 needed + unneeded labels exist.
+
+Label after the run has finished: labels and the server both append to the ledger.
+
 ## Submission and recording
 
 ### What Colosseum asks for

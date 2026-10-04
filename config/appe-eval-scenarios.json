@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "Purchases for the spec/07 section 4 check: 6 tasks, 34 purchases from config/eval-catalog.json, run on devnet by `npm run appe-eval-run` with Spend Guard in shadow mode.",
+    "It mixes purchases a reasonable owner would call needed, unneeded, repeated, and \"free elsewhere\". Which is which is for the owner to judge with `npm run appe-label`; it is deliberately not written here.",
+    "A repeated item in one task uses the same URL, so the fixed repurchase rule (10 minutes) asks the owner first; the run cancels that request. The purchase is still reviewed by Spend Guard and labelled."
+  ],
+  "tasks": [
+    {
+      "key": "video",
+      "purpose": "Make a 30-second music video for the single \"Night Drive\" (a late-night city mood)",
+      "budget": "0.40",
+      "buy": ["clip-city-night", "render-minutes", "clip-beach-day", "music-track", "clip-city-night", "font-license", "weather-tokyo"]
+    },
+    {
+      "key": "report",
+      "purpose": "Weekly streaming report for the artist, 2026-09-27 to 2026-10-03",
+      "budget": "0.40",
+      "buy": ["streaming-daily", "playlist-placements", "competitor-stats", "streaming-daily", "clip-city-night", "fx-usdjpy-daily"]
+    },
+    {
+      "key": "venue",
+      "purpose": "Book a venue in Shibuya for a release party on 2026-10-24, about 80 guests",
+      "budget": "0.40",
+      "buy": ["venue-availability-shibuya", "venue-reviews", "catering-prices", "weather-tokyo", "crypto-price-feed", "venue-availability-shibuya"]
+    },
+    {
+      "key": "translate",
+      "purpose": "Translate the Japanese press release for \"Night Drive\" into English",
+      "budget": "0.30",
+      "buy": ["mt-translate", "music-glossary", "holiday-calendar", "clip-beach-day", "mt-translate"]
+    },
+    {
+      "key": "eth",
+      "purpose": "Answer the user's question: what is the ETH/USDC price right now?",
+      "budget": "0.30",
+      "buy": ["eth-spot", "eth-ohlc-1y", "crypto-news", "eth-spot", "weather-tokyo"]
+    },
+    {
+      "key": "tax",
+      "purpose": "Prepare the label's quarterly tax filing (Q3 2026), including overseas royalties",
+      "budget": "0.30",
+      "buy": ["tax-rates-jp", "fx-quarterly-avg", "streaming-daily", "music-track", "tax-rates-jp"]
+    }
+  ]
+}

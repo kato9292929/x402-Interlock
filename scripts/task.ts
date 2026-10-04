@@ -7,6 +7,7 @@
 //   npm run task -- preflight               # check SOL, the owner's USDC token account and the authority (direct, read-only)
 //   npm run task -- init-authority          # one-time: owner's SubscriptionAuthority for USDC (direct, needs OWNER_SOLANA_PRIVATE_KEY)
 //   npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO   # new keypair in keys/seller.json; address into .env.local
+//   npm run task -- set-env TYPESAFE_API_KEY   # prompts for the value; writes .env.local; never overwrites, never prints it
 //   npm run task -- new-token OWNER_TOKEN   # random token into .env.local; never overwrites, never equal to AGENT_TOKEN
 //   npm run task -- protect add address home      # register the owner's data (prompts for the value; server-side only)
 //   npm run task -- protect list | protect remove home
@@ -78,6 +79,8 @@ async function main() {
     await newAddress(process.argv[3], arg("--env"));
   } else if (cmd === "protect") {
     await protect(process.argv[3], process.argv[4], process.argv[5], process.argv[6]);
+  } else if (cmd === "set-env") {
+    await setEnv(process.argv[3]);
   } else if (cmd === "new-token") {
     newToken(process.argv[3]);
   } else if (cmd === "seller-account") {
@@ -86,7 +89,7 @@ async function main() {
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|protect|seller-account");
+    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|set-env|protect|seller-account");
   }
 }
 
@@ -115,6 +118,34 @@ async function protect(sub: string | undefined, kind: string | undefined, label:
   } else {
     throw new SolanaSetupError("usage: npm run task -- protect add|list|remove");
   }
+}
+
+// A value you were given (an API key) written into .env.local without editing the file by hand.
+// Asked for at a prompt so it stays out of the shell history; not printed back.
+async function setEnv(name: string | undefined) {
+  if (!name || !/^[A-Z][A-Z0-9_]*$/.test(name)) throw new SolanaSetupError("usage: npm run task -- set-env NAME   (e.g. TYPESAFE_API_KEY)");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const value = (await rl.question(`${name}: `)).trim();
+  rl.close();
+  if (!value) throw new SolanaSetupError("empty value; nothing written");
+  if (/\s/.test(value)) {
+    // Say what the pasted text looked like without echoing the secret: the pieces' lengths, and
+    // the first piece only when it is a well-known prefix rather than part of the key.
+    const parts = value.split(/\s+/);
+    const prefix = /^(bearer|authorization:?|key:?|api[-_]?key:?)$/i.test(parts[0]) || /^[A-Z][A-Z0-9_]*=$/.test(parts[0]) ? ` It starts with "${parts[0]}", which is not part of the key.` : "";
+    throw new SolanaSetupError(
+      `the value contains whitespace (${parts.length} pieces, lengths ${parts.map((x) => x.length).join(", ")}); nothing written.${prefix} Copy only the key itself (the console's Copy button), then run this again.`,
+    );
+  }
+  const envText = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, "utf8") : "";
+  let next: string;
+  try {
+    next = setEnvValue(envText, name, value);
+  } catch (e) {
+    throw new SolanaSetupError((e as Error).message);
+  }
+  writeFileSync(ENV_FILE, next, { mode: 0o600 });
+  console.log(JSON.stringify({ name, env: `${name} written to ${ENV_FILE}`, length: value.length }, null, 2));
 }
 
 // A random bearer token written straight into .env.local, so nobody edits the file by hand.
