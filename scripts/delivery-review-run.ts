@@ -41,7 +41,7 @@ async function main() {
     console.log(`\n${name}: ${v.decision} ${v.reasons.join(", ")} -> ${v.status}`);
     if (d) {
       console.log(`  code:  fields_ok ${d.fields_ok}  period ${d.period}  items ${d.item_count}  missing [${d.missing_fields.join(", ")}]`);
-      console.log(`  Jev:   ` + (d.jev_status === "OK" ? `answers ${d.answers_prob}  substance ${d.substance}  fulfillment ${d.fulfillment_score}/10  (${d.jev_model})` : `UNAVAILABLE: ${d.jev_reason}`));
+      console.log(`  Jev:   ` + (d.jev_status === "OK" ? `answers ${d.answers_prob}  substance ${d.substance}  fulfillment ${d.fulfillment_score}/9  (${d.jev_model})` : `UNAVAILABLE: ${d.jev_reason}`));
     } else console.log("  delivery review: not recorded");
     runs.push({ name, id: v.decision_id, body: v.result?.body, status: v.status });
   }

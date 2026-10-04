@@ -99,6 +99,15 @@ test("an HTTP error keeps the API's own explanation in the reason", async () => 
   assert.match((r as { reason: string }).reason, /^HTTP 422: .*expected string/);
 });
 
+test("questions the API would reject (11 score levels, a null level) are refused before sending", async () => {
+  const before = seen.length;
+  const eleven = await callJev({}, { s: score("x", ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]) });
+  assert.match((eleven as { reason: string }).reason, /11 score levels, the API allows at most 10/);
+  const withNull = await callJev({}, { s: score("x", ["low", null, "high"]) });
+  assert.match((withNull as { reason: string }).reason, /score level without a description/);
+  assert.equal(seen.length, before);
+});
+
 test("no API key -> UNAVAILABLE without a request", async () => {
   const key = process.env.TYPESAFE_API_KEY;
   delete process.env.TYPESAFE_API_KEY;

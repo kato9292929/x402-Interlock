@@ -88,19 +88,21 @@ export const SUBSTANCE_LABELS = {
   undeterminable: "Cannot be determined from the state",
 } as const;
 
-// Every level described: the API may not accept undescribed (null) levels.
+// The API accepts at most 10 score levels, each described by a string (checked live 2026-10-04:
+// 11 levels -> HTTP 400, a null level -> HTTP 422). The brief's 0-10 scale has 11 levels, so the
+// rubric is 0-9; the ledger records the scale next to the score.
+export const FULFILLMENT_MAX = 9;
 const RUBRIC = [
   "0: nothing that was asked for is present",
   "1: almost nothing asked for is present",
   "2: a small part of what was asked for is present",
   "3: some of what was asked for is present, most is missing",
-  "4: a little under half of what was asked for is present",
-  "5: about half of what was asked for is present",
-  "6: a little over half of what was asked for is present",
-  "7: most of what was asked for is present, some gaps",
-  "8: nearly everything asked for is present, minor gaps",
-  "9: everything asked for is present, slightly less detail than expected",
-  "10: everything asked for is present, at the expected level of detail",
+  "4: about half of what was asked for is present",
+  "5: a little over half of what was asked for is present",
+  "6: most of what was asked for is present, clear gaps",
+  "7: nearly everything asked for is present, minor gaps",
+  "8: everything asked for is present, slightly less detail than expected",
+  "9: everything asked for is present, at the expected level of detail",
 ] as const;
 
 // Question text is ours; the purchased body is in the state, as data to be judged.
@@ -137,6 +139,8 @@ export interface DeliveryReview {
   substance: string | null;
   substance_probabilities: Record<string, number> | null;
   fulfillment_score: number | null;
+  /** the top of the rubric fulfillment_score is on (0..fulfillment_max) */
+  fulfillment_max: number;
   policy_version: string;
   cached: boolean;
 }
@@ -183,6 +187,7 @@ export async function deliveryReview(i: DeliveryInput, t: AppeThresholds & { pol
     substance: ok ? (r.answers.substance as { choice: string }).choice : null,
     substance_probabilities: ok ? (r.answers.substance as { probabilities: Record<string, number> }).probabilities : null,
     fulfillment_score: ok ? (r.answers.fulfillment as { score: number }).score : null,
+    fulfillment_max: FULFILLMENT_MAX,
     policy_version: t.policy_version ?? t.version,
     cached: ok ? !!r.cached : false,
   };

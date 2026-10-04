@@ -64,7 +64,7 @@ const dr = first("delivery_review")?.data as
   | undefined;
 if (dr) {
   console.log(`  delivery review (record only): fields_ok ${dr.fields_ok}  period ${dr.fields.period}  items ${dr.fields.item_count}  missing [${dr.fields.missing_fields.join(", ")}]  ${dr.body_size} bytes  ${dr.latency_ms} ms`);
-  if (dr.jev_status === "OK") console.log(`    answers ${dr.answers_prob}  substance ${dr.substance} ${JSON.stringify(dr.substance_probabilities)}  fulfillment ${dr.fulfillment_score}/10  model ${dr.jev_model}`);
+  if (dr.jev_status === "OK") console.log(`    answers ${dr.answers_prob}  substance ${dr.substance} ${JSON.stringify(dr.substance_probabilities)}  fulfillment ${dr.fulfillment_score}/${(dr as { fulfillment_max?: number }).fulfillment_max ?? 9}  model ${dr.jev_model}`);
   else console.log(`    Jev UNAVAILABLE: ${dr.jev_reason}`);
 }
 const r = first("payment_result")?.data as { status?: string; reason?: string } | undefined;

@@ -14,8 +14,7 @@ const state = {
   response: { body, truncated: false, fields: { status_ok: true, json: true, item_count: 0, missing_fields: ["date", "plays"], period: "match", min_items_ok: false, fields_ok: false }, latency_ms: 300, size_bytes: body.length, status: 200 },
 };
 const variants: [string, Questions, unknown][] = [
-  ["as shipped (11-level score, all described)", DELIVERY_QUESTIONS, state],
-  ["score with null levels (previous version)", { ...DELIVERY_QUESTIONS, fulfillment: score("How fully?", ["none", null, null, null, null, "half", null, null, null, null, "all"]) }, state],
+  ["as shipped (10-level score 0-9, all described)", DELIVERY_QUESTIONS, state],
   ["score 0-2 only", { ...DELIVERY_QUESTIONS, fulfillment: score("How fully?", ["none", "partly", "fully"]) }, state],
   ["no score question", { answers: DELIVERY_QUESTIONS.answers, substance: DELIVERY_QUESTIONS.substance }, state],
   ["noul only", { answers: noul("Does response.body answer request?") }, state],

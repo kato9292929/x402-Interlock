@@ -9,6 +9,9 @@
 >   TypeSafe JavaScript SDK (`@typesafe-ai/sdk` 0.6.0, published by typesafe.ai) uses
 >   `POST /v1/systemone` and the type `noul`. The implementation follows the SDK. See
 >   spec/01-ai-log.md.
+> - Section 5-3 asks for a 0-10 fulfillment score (11 levels). The API allows at most 10 score
+>   levels and rejects undescribed levels (HTTP 400 / 422, seen live 2026-10-04), so the rubric is
+>   0-9 and each `delivery_review` records `fulfillment_max: 9`.
 
 ## 0. この指示書の位置づけ
 

@@ -72,11 +72,29 @@ export const clearJevCache = () => cache.clear();
  * Ask Jev. `state` is data only: seller text, purchased content and agent claims go in as JSON
  * values, never into the question text, so they are evaluated rather than followed.
  */
+/**
+ * Limits the API enforces that the SDK's types do not (found live 2026-10-04): at most 10 score
+ * levels, and every criterion described by a non-null value. Checked before sending, so a bad
+ * question is a clear UNAVAILABLE reason instead of an HTTP 400/422.
+ */
+export function questionProblem(questions: Questions): string | undefined {
+  for (const [name, q] of Object.entries(questions)) {
+    if (q.type === "score") {
+      if (q.criteria.length > 10) return `question ${name}: ${q.criteria.length} score levels, the API allows at most 10`;
+      if (q.criteria.some((c) => c === null)) return `question ${name}: a score level without a description`;
+    }
+    if (q.type === "choice" && Object.values(q.criteria).some((c) => c === null)) return `question ${name}: a choice label without a description`;
+  }
+  return undefined;
+}
+
 export async function callJev(state: Record<string, unknown>, questions: Questions, opts: JevOptions = {}): Promise<JevResult> {
   const started = Date.now();
   const unavailable = (reason: string): JevResult => ({ status: "UNAVAILABLE", reason, latency_ms: Date.now() - started });
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) return unavailable("TYPESAFE_API_KEY is not set");
+  const bad = questionProblem(questions);
+  if (bad) return unavailable(bad);
   const model = opts.model ?? "jev-latest";
   const key = createHash("sha256").update(JSON.stringify([model, state, questions])).digest("hex");
   const cacheMs = opts.cacheMs ?? 0;

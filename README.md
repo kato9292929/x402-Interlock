@@ -268,7 +268,7 @@ and 200 does not mean the data asked for arrived. A purchase can state what it n
   period in the response against the requested one.
 - **Jev** (the first 32 KB of the body, as data): does it answer the request (noul), what it is in
   substance (choice: real data / empty / dummy or fixed values / error text / undeterminable),
-  how fully it meets the request (score 0–10).
+  how fully it meets the request (score 0–9: the API allows at most 10 levels; the brief asked for 0–10).
 - **Ledger** `delivery_review`: tx, URL, amount, the body's SHA-256 and size (never the body),
   latency, the code checks, Jev's answers, `jev_model`, `policy_version`.
 - Record only: it never refunds or reverses a payment, and one review is not a score for the seller.
