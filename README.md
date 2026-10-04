@@ -233,7 +233,7 @@ different things. Everything above enforces the first in code (on-chain remainin
 screening, limits, signing, task state, deterministic matching). Spend Guard adds a judgement of
 meaning: is this purchase needed for the task, and does it repeat one already made?
 
-**Stage reached: 1–3 of 8, all three run on devnet.** Jev call layer, Spend Guard in **shadow mode**, Delivery Review
+**Stage reached: 1–3 of 8 run on devnet; stage 4 (the check against the owner's judgement) tooling built, not yet run.** Jev call layer, Spend Guard in **shadow mode**, Delivery Review
 **recording**. Spend Guard
 records what it would have done and **never changes a payment**. Enforcement waits for the
 section 4 check (≥ 30 reviewed purchases compared with the owner's judgement); the code refuses any
@@ -276,6 +276,17 @@ and 200 does not mean the data asked for arrived. A purchase can state what it n
 - Demo sellers on devnet, 0.05 USDC each: `sol-stats` (answers the period asked),
   `sol-stats-stale` (says "latest and complete", returns last year with a fixed value and no
   `listeners`), `sol-stats-empty` (no rows).
+
+**Stage 4, the check before any enforcement** (spec/07 section 4). 34 purchases across 6 tasks
+([`config/appe-eval-scenarios.json`](config/appe-eval-scenarios.json), demo catalog
+[`config/eval-catalog.json`](config/eval-catalog.json), 0.02–0.04 USDC each) run in shadow mode
+(`npm run appe-eval-run`). The owner labels each one needed / not needed / not sure with one key
+(`npm run appe-label`; Jev's answer is shown only after the label; stop and resume any time;
+labels are `owner_label` ledger events). `npm run appe-metrics` then reports the four metrics
+separately, the probability ranges per label, and candidate rules for **both wordings of the
+necessity question** ("necessary" and "necessary or useful", asked in separate calls on the same
+purchases). It decides nothing; the owner chooses and records the reason in
+`config/appe-thresholds.json`.
 
 `npm run jev-probe` makes one live call with a synthetic state and checks the response shape.
 `npm run why` and the agent's output show the shadow result per payment.

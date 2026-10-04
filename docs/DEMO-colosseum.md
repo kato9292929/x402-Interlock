@@ -289,6 +289,29 @@ It ends with `checks:` (`yes` / `NO`): all paid, empty seen as empty, period mis
 code, no purchased body in the ledger, model and policy version recorded. Jev's numbers are what
 we want to see, not a pass or fail.
 
+## 7. Stage 4: Spend Guard against the owner's judgement (spec/07 section 4)
+
+Nothing is enforced in this stage. With `npm run dev` running in another terminal:
+
+```bash
+cd ~/x402-Interlock
+npm run appe-eval-run
+npm run appe-label
+npm run appe-metrics
+```
+
+1. `appe-eval-run` opens 6 tasks and makes 34 purchases (about 1 USDC in total; repeats within a
+   task go to the owner by the fixed 10-minute rule and are cancelled, so they cost nothing). Each
+   line shows Spend Guard's shadow verdict. `npm run appe-eval-run -- venue` reruns one task.
+2. `appe-label`: one purchase per screen line (task purpose, item, price, the seller's
+   description in one line). Press `1` needed, `2` not needed, `3` not sure, `q` to stop; run it
+   again to continue where you stopped. Jev's numbers appear after your key. When a task's
+   purchases are all labelled it asks whether the task's purpose was met (`1` / `2` / `3`).
+3. `appe-metrics`: the four metrics, ranges per label, and the rule table for both wordings.
+   It says "NOT ENOUGH" until 30 needed + unneeded labels exist.
+
+Label after the run has finished: labels and the server both append to the ledger.
+
 ## Submission and recording
 
 ### What Colosseum asks for
