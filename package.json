@@ -16,7 +16,8 @@
     "why": "tsx scripts/why.ts",
     "jev-probe": "tsx --env-file-if-exists=.env.local scripts/jev-probe.ts",
     "spend-guard-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-run.ts",
-    "delivery-review-run": "tsx --env-file-if-exists=.env.local scripts/delivery-review-run.ts"
+    "delivery-review-run": "tsx --env-file-if-exists=.env.local scripts/delivery-review-run.ts",
+    "jev-probe-delivery": "tsx --env-file-if-exists=.env.local scripts/jev-probe-delivery.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",
