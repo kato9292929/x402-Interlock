@@ -17,7 +17,7 @@ import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymen
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import type { IDKitResult } from "@worldcoin/idkit-core";
 import { NextRequest } from "next/server";
-import { setAllowanceChain, snapshotFromAccount, type AllowanceChain } from "../lib/solana/allowance";
+import { setAllowanceChain, snapshotFromAccount, SolanaSendTimeout, type AllowanceChain } from "../lib/solana/allowance";
 import { setPaymentSignerForTests } from "../lib/signer";
 import { loadApprovalRequest } from "../lib/world";
 import { Ledger } from "../lib/ledger";
@@ -84,7 +84,9 @@ class FakeChain implements AllowanceChain {
     this.revoked.push(allowance);
     return { signature: `revoke_${allowance.slice(0, 8)}` };
   }
+  pullTimesOut = false;
   async pull(allowance: string, amount: bigint) {
+    if (this.pullTimesOut) throw new SolanaSendTimeout("pull: no confirmation within 60000 ms; it may still land.");
     const a = this.accounts.get(allowance);
     if (!a || a.amount < amount) throw new Error("insufficient allowance");
     a.amount -= amount;
@@ -410,6 +412,21 @@ test("Intercepta 429 -> BLOCK SCREENING_UNAVAILABLE, and the reply names the che
     assert.match(q!.reasons.join(" "), /rate limit reached \(HTTP 429\)/);
   } finally {
     interceptaQuickScanStatus = 200;
+  }
+});
+
+test("a pull with no confirmation in time is recorded as unconfirmed; the seller is not paid", async () => {
+  const t = await openTask("1.00");
+  const paidBefore = paid.length;
+  chain.pullTimesOut = true;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "PAYMENT_FAILED");
+    const r = new Ledger().byDecision(v.decision_id).find((e) => e.event_type === "payment_result")!;
+    assert.equal(r.data.reason, "ALLOWANCE_PULL_UNCONFIRMED");
+    assert.equal(paid.length, paidBefore);
+  } finally {
+    chain.pullTimesOut = false;
   }
 });
 
