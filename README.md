@@ -288,6 +288,17 @@ necessity question** ("necessary" and "necessary or useful", asked in separate c
 purchases). It decides nothing; the owner chooses and records the reason in
 `config/appe-thresholds.json`.
 
+**Known gap, seen live (2026-10-05): a retried purchase while the first is still in flight is paid
+twice.** During the stage 4 run, two payment requests hung for over 5 minutes (the Allowance pull
+waiting for a WebSocket confirmation) and the run script retried them. Both first requests later
+completed, so `weather-tokyo` (venue task) and `crypto-news` (eth task) were each paid twice
+(0.02 USDC each; task usage 0.16 and 0.10 instead of 0.14 and 0.08). Nothing in the gate stopped
+the second request: the repurchase rule and Spend Guard's history only see completed payments.
+Fixed so far: the script never retries a payment request, and every Solana send is bounded (60 s,
+then recorded as unconfirmed). Not fixed yet: the gate itself treating an in-flight purchase of the
+same target as a duplicate; that is spec/07 section 8 (reserve, confirm, release; no double
+purchase on retry).
+
 `npm run jev-probe` makes one live call with a synthetic state and checks the response shape.
 `npm run why` and the agent's output show the shadow result per payment.
 
