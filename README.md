@@ -233,7 +233,7 @@ different things. Everything above enforces the first in code (on-chain remainin
 screening, limits, signing, task state, deterministic matching). Spend Guard adds a judgement of
 meaning: is this purchase needed for the task, and does it repeat one already made?
 
-**Stage reached: 1–3 of 8.** Jev call layer, Spend Guard in **shadow mode**, Delivery Review
+**Stage reached: 1–3 of 8, all three run on devnet.** Jev call layer, Spend Guard in **shadow mode**, Delivery Review
 **recording**. Spend Guard
 records what it would have done and **never changes a payment**. Enforcement waits for the
 section 4 check (≥ 30 reviewed purchases compared with the owner's judgement); the code refuses any
@@ -285,7 +285,7 @@ and 200 does not mean the data asked for arrived. A purchase can state what it n
 | Jev layer, Spend Guard shadow, ledger | **Verified offline**: `test/jev.test.ts` (fake API following the SDK contract), Spend Guard tests in `test/tasks.integration.test.ts`. |
 | A live call to Jev | **Live (2026-10-03)**, `npm run jev-probe` on the owner's Mac: HTTP 200 in 403 ms, all three answer shapes (`noul`, `choice`, `score`) as the SDK documents, model returned `jev-1.13.0`, now pinned in `config/appe-thresholds.json` (request and expected model). Spend Guard on devnet: **not yet run.** |
 | Spend Guard shadow on devnet | **Live (2026-10-04)**, `npm run spend-guard-run` on the owner's Mac, jev-1.13.0, 244–272 ms per call. Music-video task, stock clip twice: necessity 0.22 / 0.26, nature `direct` (0.63 / 0.75), duplicate 0.08 → **0.89** on the repeat. Tax-filing task, the same clip: necessity 0.02, nature `unrelated` (1.0). All three paid; all three would_have `block`, because necessity sits below the provisional 0.40 even for a direct purchase (see below). |
-| Delivery Review on devnet | **Not yet run.** Verified offline: Delivery Review tests in `test/tasks.integration.test.ts`. |
+| Delivery Review on devnet | **Live (2026-10-04)**, `npm run delivery-review-run` on the owner's Mac, jev-1.13.0, three 0.05 USDC purchases, all paid. `sol-stats`: fields_ok true, answers 0.94, substance real_data (0.93), fulfillment 8.95/9. `sol-stats-stale` ("latest and complete"): fields_ok false (period mismatch, no `listeners`), answers 0.02, substance dummy_or_fixed (1.0), fulfillment 2.52/9. `sol-stats-empty`: fields_ok false (0 items), answers 0.05, substance empty (0.99), fulfillment 1.05/9. No body in the ledger. The first run got HTTP 400/422 from the API (more than 10 score levels; undescribed levels), fixed by a 0–9 rubric. |
 
 **What the first live numbers say (n = 3, not a validation).** nature and duplicate separate the
 cases clearly (direct vs unrelated 1.0; duplicate 0.08 vs 0.89). The necessity question does not
