@@ -96,8 +96,10 @@ export async function callJev(state: Record<string, unknown>, questions: Questio
     });
     body = await client.systemOne({ state: state as never, questions, model });
   } catch (e) {
-    const err = e as { status?: number; name?: string; message?: string };
-    return unavailable(err.status ? `HTTP ${err.status}` : `${err.name ?? "Error"}: ${err.message ?? String(e)}`);
+    const err = e as { status?: number; name?: string; message?: string; body?: unknown };
+    // Keep the API's own explanation (e.g. which field a 422 rejected); it holds no secrets.
+    const detail = err.body === undefined ? "" : `: ${(typeof err.body === "string" ? err.body : JSON.stringify(err.body)).slice(0, 500)}`;
+    return unavailable(err.status ? `HTTP ${err.status}${detail}` : `${err.name ?? "Error"}: ${err.message ?? String(e)}`);
   }
 
   const b = body as { model?: unknown; answers?: Record<string, unknown>; usage?: { input_tokens: number; output_tokens: number } } | null;

@@ -88,7 +88,20 @@ export const SUBSTANCE_LABELS = {
   undeterminable: "Cannot be determined from the state",
 } as const;
 
-const RUBRIC = ["Nothing that was asked for is present", null, null, null, null, "About half of what was asked for is present", null, null, null, null, "Everything asked for is present, at the expected level of detail"] as const;
+// Every level described: the API may not accept undescribed (null) levels.
+const RUBRIC = [
+  "0: nothing that was asked for is present",
+  "1: almost nothing asked for is present",
+  "2: a small part of what was asked for is present",
+  "3: some of what was asked for is present, most is missing",
+  "4: a little under half of what was asked for is present",
+  "5: about half of what was asked for is present",
+  "6: a little over half of what was asked for is present",
+  "7: most of what was asked for is present, some gaps",
+  "8: nearly everything asked for is present, minor gaps",
+  "9: everything asked for is present, slightly less detail than expected",
+  "10: everything asked for is present, at the expected level of detail",
+] as const;
 
 // Question text is ours; the purchased body is in the state, as data to be judged.
 export const DELIVERY_QUESTIONS = {

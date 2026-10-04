@@ -91,6 +91,14 @@ test("HTTP errors retry once, then UNAVAILABLE; a timeout is UNAVAILABLE", async
   assert.equal(slow.status, "UNAVAILABLE");
 });
 
+test("an HTTP error keeps the API's own explanation in the reason", async () => {
+  clearJevCache();
+  reply = () => ({ status: 422, json: { detail: "questions.fit.criteria.1: expected string" } });
+  const r = await callJev({ e: 1 }, Q, { retries: 0 });
+  assert.equal(r.status, "UNAVAILABLE");
+  assert.match((r as { reason: string }).reason, /^HTTP 422: .*expected string/);
+});
+
 test("no API key -> UNAVAILABLE without a request", async () => {
   const key = process.env.TYPESAFE_API_KEY;
   delete process.env.TYPESAFE_API_KEY;
