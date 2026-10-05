@@ -127,6 +127,79 @@ function runContext(all: LedgerEvent[], run_id: string, resource: string, now: D
 }
 
 // --------------------------------------------------------------------------
+// reserve, confirm, release (spec/07 section 8)
+// --------------------------------------------------------------------------
+//
+// Seen live on 2026-10-05: a payment hung for minutes, the caller retried, and both went through.
+// The repurchase rule only sees completed payments, so it could not see the first one. Now a
+// payment is reserved in the ledger before any money moves, and a second purchase of the same
+// resource in the same run (task) is refused while that reservation is held:
+//   held     from payment_reserved until a payment_result says how it ended
+//   PAID     confirmed: no longer held; the repurchase rule takes over
+//   failed   released, when it is known that no money reached the seller
+//   stale    a payment whose decision began before an identical one completed is refused at
+//            the reservation (PURCHASED_SINCE_DECISION): its decision did not see that purchase
+//   unknown  still held: the pull timed out (it may still land) or the seller never answered
+//            (it may have settled). Only the owner releases it, after checking the chain:
+//            npm run task -- release <decision_id> --reason "..."
+// Fail closed: a server that stops mid-payment leaves the reservation held.
+
+/** Outcomes after which money may have moved without the gate knowing: the reservation stays. */
+const OUTCOME_UNKNOWN = new Set(["ALLOWANCE_PULL_UNCONFIRMED", "SELLER_NO_RESPONSE"]);
+
+export interface HeldPurchase {
+  decision_id: string;
+  state: "IN_FLIGHT" | "UNCONFIRMED";
+  reason?: string;
+}
+
+/** A held reservation for this resource in this run, if any (the oldest one). */
+export function heldPurchase(all: LedgerEvent[], run_id: string, resource: string): HeldPurchase | undefined {
+  for (const r of all) {
+    if (r.event_type !== "payment_reserved" || r.data.run_id !== run_id || r.data.resource !== resource) continue;
+    const own = all.filter((e) => e.decision_id === r.decision_id);
+    if (own.some((e) => e.event_type === "payment_reservation_released")) continue;
+    const result = own.filter((e) => e.event_type === "payment_result").at(-1);
+    if (!result) return { decision_id: r.decision_id, state: "IN_FLIGHT" };
+    if (result.data.status === "PAYMENT_FAILED" && OUTCOME_UNKNOWN.has(String(result.data.reason))) {
+      return { decision_id: r.decision_id, state: "UNCONFIRMED", reason: String(result.data.reason) };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Paid for this resource in this run after `decision_id` began (its first event: the ledger it
+ * decided on was read then, so it could not see a payment completed after that).
+ */
+export function paidSinceDecision(all: LedgerEvent[], decision_id: string, run_id: string, resource: string): string | undefined {
+  const decided = all.findIndex((e) => e.decision_id === decision_id);
+  if (decided < 0) return undefined;
+  return all
+    .slice(decided + 1)
+    .find((e) => e.event_type === "payment_result" && e.data.status === "PAID" && e.data.run_id === run_id && e.data.resource === resource && e.decision_id !== decision_id)?.decision_id;
+}
+
+const heldReason = (h: HeldPurchase): ReasonCode => (h.state === "IN_FLIGHT" ? "PURCHASE_IN_FLIGHT" : "PREVIOUS_PAYMENT_UNCONFIRMED");
+
+/**
+ * The owner releases a reservation whose outcome is unknown, after checking on chain whether the
+ * pull landed and whether the seller was paid. Recorded with the reason; nothing is deleted.
+ */
+export function releaseReservation(decision_id: string, reason: string): HeldPurchase {
+  const l = ledger();
+  const all = l.readAll();
+  const r = all.find((e) => e.decision_id === decision_id && e.event_type === "payment_reserved");
+  if (!r) throw new Error(`no reservation for ${decision_id}`);
+  const held = heldPurchase(all, String(r.data.run_id), String(r.data.resource));
+  if (!held || held.decision_id !== decision_id) throw new Error(`${decision_id} is not held (already confirmed, released, or failed with nothing paid)`);
+  if (held.state === "IN_FLIGHT") throw new Error(`${decision_id} is still being paid; wait for its result (npm run why ${decision_id})`);
+  if (!reason.trim()) throw new Error("give the reason: what you checked on chain");
+  l.append(decision_id, "payment_reservation_released", { task_id: r.data.task_id ?? null, run_id: r.data.run_id, resource: r.data.resource, by: "owner", reason, was: held.reason });
+  return held;
+}
+
+// --------------------------------------------------------------------------
 // evaluate
 // --------------------------------------------------------------------------
 
@@ -162,6 +235,16 @@ export async function evaluate(input: {
   const now = new Date();
   const ctx = runContext(l.readAll(), run_id, input.url, now);
   const candidate = { resource: input.url, options };
+
+  // The same purchase still being paid, or with an unknown outcome: a retry must not pay again.
+  const held = heldPurchase(l.readAll(), run_id, input.url);
+  if (held) {
+    const reasons = [heldReason(held)];
+    l.append(decision_id, "gate_decision", { task_id: task_id ?? null, decision: "BLOCK", reasons, selected: null, held_by: held.decision_id });
+    l.append(decision_id, "payment_result", { task_id: task_id ?? null, status: "NOT_EXECUTED", run_id, resource: input.url, reason: "BLOCK" });
+    console.log(`[pay] ${decision_id} BLOCK ${reasons[0]}: ${held.decision_id} for the same resource is ${held.state === "IN_FLIGHT" ? "still being paid" : `unconfirmed (${held.reason})`}`);
+    return { decision_id, decision: "BLOCK", reasons, status: "BLOCKED", task_id };
+  }
 
   // Selection does not depend on screening (screening can only block), so find the
   // option that would be paid, screen exactly that one, then decide for real.
@@ -394,6 +477,23 @@ async function execute(decision_id: string): Promise<GateView> {
   if (paidOrAttempted(l.byDecision(decision_id))) return view(decision_id);
   const task_id = p.task_id ?? null;
 
+  // Reserve before anything can move money. Check and reserve run with no await in between, so
+  // two requests in this process cannot both pass (a payment approved by the owner after
+  // waiting comes through here too).
+  const ledgerNow = l.readAll();
+  const held = heldPurchase(ledgerNow, p.run_id, p.url);
+  if (held?.decision_id === decision_id) return view(decision_id); // this payment is already running
+  if (held) {
+    l.append(decision_id, "payment_result", { task_id, status: "NOT_EXECUTED", run_id: p.run_id, resource: p.url, reason: heldReason(held), held_by: held.decision_id, phase: "reserve" });
+    return view(decision_id);
+  }
+  const since = paidSinceDecision(ledgerNow, decision_id, p.run_id, p.url);
+  if (since) {
+    l.append(decision_id, "payment_result", { task_id, status: "NOT_EXECUTED", run_id: p.run_id, resource: p.url, reason: "PURCHASED_SINCE_DECISION", held_by: since, phase: "reserve" });
+    return view(decision_id);
+  }
+  l.append(decision_id, "payment_reserved", { task_id, run_id: p.run_id, resource: p.url, amount: p.selected.amount });
+
   // Re-check the task and read the Allowance again immediately before signing. Nothing from
   // evaluate() is reused: an owner may have closed the task, or other payments may have used
   // the budget, while this one waited for approval.
@@ -431,9 +531,11 @@ async function execute(decision_id: string): Promise<GateView> {
   let status: Status = "PAYMENT_FAILED";
   let out: GateView["result"];
   let delivered: { text: string; latency_ms: number; status: number } | undefined;
+  let sent = false;
   try {
     const payload = await signApproved(p.paymentRequired, p.selected);
     const started = Date.now();
+    sent = true;
     const res = await fetch(p.url, { headers: http.encodePaymentSignatureHeader(payload), signal: AbortSignal.timeout(60_000) });
     console.log(`[pay] ${decision_id} seller answered HTTP ${res.status} in ${Date.now() - started} ms`);
     // Keep the exact bytes: Delivery Review hashes and measures them.
@@ -454,6 +556,8 @@ async function execute(decision_id: string): Promise<GateView> {
     out = { http_status: res.status, body, settlement };
     status = res.ok ? "PAID" : "PAYMENT_FAILED";
   } catch (e) {
+    // No answer from the seller after the payment was signed: it may have settled. Recorded as
+    // unknown, so the reservation stays held and a retry cannot pay a second time.
     out = { http_status: 0, body: { error: (e as Error).message } };
   }
   mkdirSync(path.dirname(resultFile(decision_id)), { recursive: true });
@@ -461,6 +565,7 @@ async function execute(decision_id: string): Promise<GateView> {
   l.append(decision_id, "payment_result", {
     task_id,
     status,
+    ...(out?.http_status === 0 ? { reason: sent ? "SELLER_NO_RESPONSE" : "SIGNING_FAILED" } : {}),
     run_id: p.run_id,
     resource: p.url,
     pull_tx: pull_tx ?? null,

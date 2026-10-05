@@ -18,6 +18,8 @@ export type LedgerEventType =
   | "owner_task_label"
   | "owner_label_reset"
   | "spend_guard_replay"
+  | "payment_reserved"
+  | "payment_reservation_released"
   | "allowance_checked";
 
 export interface LedgerEvent {

@@ -85,7 +85,10 @@ class FakeChain implements AllowanceChain {
     return { signature: `revoke_${allowance.slice(0, 8)}` };
   }
   pullTimesOut = false;
+  /** while set, a pull waits for it: a payment held in flight */
+  pullGate: Promise<void> | undefined;
   async pull(allowance: string, amount: bigint) {
+    if (this.pullGate) await this.pullGate;
     if (this.pullTimesOut) throw new SolanaSendTimeout("pull: no confirmation within 60000 ms; it may still land.");
     const a = this.accounts.get(allowance);
     if (!a || a.amount < amount) throw new Error("insufficient allowance");
@@ -428,6 +431,79 @@ test("a pull with no confirmation in time is recorded as unconfirmed; the seller
   } finally {
     chain.pullTimesOut = false;
   }
+});
+
+// spec/07 section 8: reserve, confirm, release. A retry while the first payment is still
+// running (seen live 2026-10-05: paid twice) or has an unknown outcome must not pay again.
+const buyAt = async (task_id: string, url: string) => (await gate()).evaluate({ url, purpose: "clip", task_id, baseUrl: "http://x" });
+const until = async (cond: () => boolean) => {
+  for (let i = 0; i < 300 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(cond(), "condition not reached");
+};
+
+test("in flight: a retry of the same purchase is blocked; the seller is paid once", async () => {
+  const t = await openTask("1.00");
+  const url = `${sellerUrl}/sol-clip?retry=1`;
+  const paidBefore = paid.length;
+  let release!: () => void;
+  chain.pullGate = new Promise((r) => (release = r));
+  try {
+    const first = buyAt(t.task_id, url);
+    await until(() => new Ledger().readAll().some((e) => e.event_type === "payment_reserved" && e.data.task_id === t.task_id));
+    const retry = await buyAt(t.task_id, url);
+    assert.equal(retry.status, "BLOCKED");
+    assert.deepEqual(retry.reasons, ["PURCHASE_IN_FLIGHT"]);
+    release();
+    assert.equal((await first).status, "PAID");
+  } finally {
+    chain.pullGate = undefined;
+  }
+  assert.equal(paid.length, paidBefore + 1);
+  // Confirmed: no longer held; the ordinary repurchase rule applies again.
+  const again = await buyAt(t.task_id, url);
+  assert.equal(again.decision, "ASK_HUMAN");
+  assert.ok(again.reasons.includes("REPURCHASE_IN_WINDOW") && !again.reasons.includes("PURCHASE_IN_FLIGHT"));
+});
+
+test("two requests at once for the same purchase: only one reserves and pays", async () => {
+  const t = await openTask("1.00");
+  const url = `${sellerUrl}/sol-clip?twin=1`;
+  const paidBefore = paid.length;
+  const [a, b] = await Promise.all([buyAt(t.task_id, url), buyAt(t.task_id, url)]);
+  assert.equal([a, b].filter((v) => v.status === "PAID").length, 1);
+  const loser = a.status === "PAID" ? b : a;
+  const r = new Ledger().byDecision(loser.decision_id).find((e) => e.event_type === "payment_result")!;
+  // Either it saw the other one running, or the other had already been paid by the time it got there.
+  assert.ok(["PURCHASE_IN_FLIGHT", "PURCHASED_SINCE_DECISION"].includes(String(r.data.reason)), String(r.data.reason));
+  assert.equal(paid.length, paidBefore + 1);
+});
+
+test("unknown outcome: held until the owner releases it with a reason; other tasks unaffected", async () => {
+  const { releaseReservation } = await gate();
+  const t = await openTask("1.00");
+  const other = await openTask("1.00");
+  const url = `${sellerUrl}/sol-clip?unconfirmed=1`;
+  chain.pullTimesOut = true;
+  let first;
+  try {
+    first = await buyAt(t.task_id, url);
+  } finally {
+    chain.pullTimesOut = false;
+  }
+  assert.equal(first.status, "PAYMENT_FAILED");
+  const blocked = await buyAt(t.task_id, url);
+  assert.deepEqual(blocked.reasons, ["PREVIOUS_PAYMENT_UNCONFIRMED"]);
+  assert.equal((await buyAt(other.task_id, url)).status, "PAID"); // held per task, not globally
+  assert.throws(() => releaseReservation(first.decision_id, " "), /reason/);
+  assert.throws(() => releaseReservation(blocked.decision_id, "x"), /no reservation/);
+  const held = releaseReservation(first.decision_id, "pull not on chain (explorer), seller not paid");
+  assert.equal(held.reason, "ALLOWANCE_PULL_UNCONFIRMED");
+  assert.throws(() => releaseReservation(first.decision_id, "again"), /not held/);
+  // Released: no longer blocked as unconfirmed. (The other task's purchase of the same URL a moment
+  // ago still triggers the ordinary repurchase rule, which asks the owner.)
+  const after = await buyAt(t.task_id, url);
+  assert.ok(!after.reasons.includes("PREVIOUS_PAYMENT_UNCONFIRMED"));
+  assert.equal(after.decision, "ASK_HUMAN");
 });
 
 test("budget used up: stops with ALLOWANCE_INSUFFICIENT (0.30 x 3 of 1.00, 4th blocked)", async () => {
