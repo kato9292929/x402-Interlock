@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { choice, noul, score } from "@typesafe-ai/sdk";
 import { callJev, type JevResult } from "./jev";
-import type { AppeThresholds } from "./appe";
+import { judgeOptions, type AppeThresholds } from "./appe";
 
 // Delivery Review (spec/07 section 5): after a paid purchase, compare what came back with what
 // was asked for, and record it. Being paid and getting what was needed are different things.
@@ -133,6 +133,7 @@ export interface DeliveryReview {
   fields: FieldCheck;
   requirements: Requirements | null;
   jev_status: JevResult["status"];
+  jev_provider: string;
   jev_model: string | null;
   jev_reason?: string;
   answers_prob: number | null;
@@ -164,13 +165,8 @@ export async function deliveryReview(i: DeliveryInput, t: AppeThresholds & { pol
       status: i.status,
     },
   };
-  const r = await callJev(state, DELIVERY_QUESTIONS, {
-    model: t.jev.model,
-    expectedModel: t.jev.expected_model,
-    timeoutMs: t.jev.timeout_ms,
-    retries: t.jev.retries,
-    cacheMs: t.jev.cache_minutes * 60_000,
-  }).catch((e): JevResult => ({ status: "UNAVAILABLE", reason: (e as Error).message, latency_ms: 0 }));
+  const opts = judgeOptions(t);
+  const r = await callJev(state, DELIVERY_QUESTIONS, opts).catch((e): JevResult => ({ status: "UNAVAILABLE", reason: (e as Error).message, latency_ms: 0 }));
   const ok = r.status === "OK";
   return {
     body_sha256: bodySha256(i.text),
@@ -181,6 +177,7 @@ export async function deliveryReview(i: DeliveryInput, t: AppeThresholds & { pol
     fields,
     requirements: i.requirements ?? null,
     jev_status: r.status,
+    jev_provider: opts.provider,
     jev_model: ok ? r.model : null,
     ...(ok ? {} : { jev_reason: r.reason }),
     answers_prob: ok ? (r.answers.answers as { noul: number }).noul : null,

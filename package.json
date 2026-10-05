@@ -20,7 +20,8 @@
     "jev-probe-delivery": "tsx --env-file-if-exists=.env.local scripts/jev-probe-delivery.ts",
     "appe-eval-run": "tsx --env-file-if-exists=.env.local scripts/appe-eval-run.ts",
     "appe-label": "tsx --env-file-if-exists=.env.local scripts/appe-label.ts",
-    "appe-metrics": "tsx --env-file-if-exists=.env.local scripts/appe-metrics.ts"
+    "appe-metrics": "tsx --env-file-if-exists=.env.local scripts/appe-metrics.ts",
+    "appe-compare": "tsx --env-file-if-exists=.env.local scripts/appe-compare.ts"
   },
   "dependencies": {
     "@solana-program/token": "^0.15.0",

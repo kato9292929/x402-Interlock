@@ -27,7 +27,7 @@ async function main() {
   const client = new TypeSafeClient({ baseURL: process.env.TYPESAFE_BASE_URL || undefined, logLevel: "off", timeout: 15_000, retry: { maxRetries: 0 } });
   for (const [name, questions, st] of variants) {
     try {
-      const r = (await client.systemOne({ state: st as never, questions, model: t.jev.model })) as { model: string; answers: Record<string, unknown> };
+      const r = (await client.systemOne({ state: st as never, questions, model: t.providers.typesafe.model })) as { model: string; answers: Record<string, unknown> };
       console.log(`OK   ${name}  (${r.model})  ${JSON.stringify(r.answers)}`);
     } catch (e) {
       const err = e as { status?: number; body?: unknown; message?: string };

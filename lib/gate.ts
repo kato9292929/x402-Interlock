@@ -24,7 +24,7 @@ import { bodySha256, deliveryReview, type DeliveryReview, type Requirements } fr
 import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
 import { isSolanaNetwork } from "./solana/config";
-import { allowanceChain } from "./solana/allowance";
+import { allowanceChain, SolanaSendTimeout } from "./solana/allowance";
 import { checkAllowance, checkTask } from "./tasks";
 import { createApprovalRequest, loadApprovalRequest, verifyApproval, type VerificationOutcome } from "./world";
 import type { IDKitResult } from "@worldcoin/idkit-core";
@@ -413,7 +413,17 @@ async function execute(decision_id: string): Promise<GateView> {
       // then pay from there with a standard x402 Solana payment.
       pull_tx = (await allowanceChain().pull(t.task!.allowance.pubkey, amount)).signature;
     } catch (e) {
-      l.append(decision_id, "payment_result", { task_id, status: "PAYMENT_FAILED", run_id: p.run_id, resource: p.url, reason: "ALLOWANCE_PULL_FAILED", error: (e as Error).message });
+      // A timed-out pull may still land (spec/07 principle 6): record it as unconfirmed, do not
+      // pay the seller, do not retry. The next check reads the Allowance from chain anyway.
+      const unconfirmed = e instanceof SolanaSendTimeout;
+      l.append(decision_id, "payment_result", {
+        task_id,
+        status: "PAYMENT_FAILED",
+        run_id: p.run_id,
+        resource: p.url,
+        reason: unconfirmed ? "ALLOWANCE_PULL_UNCONFIRMED" : "ALLOWANCE_PULL_FAILED",
+        error: (e as Error).message,
+      });
       return view(decision_id);
     }
   }
@@ -425,6 +435,7 @@ async function execute(decision_id: string): Promise<GateView> {
     const payload = await signApproved(p.paymentRequired, p.selected);
     const started = Date.now();
     const res = await fetch(p.url, { headers: http.encodePaymentSignatureHeader(payload), signal: AbortSignal.timeout(60_000) });
+    console.log(`[pay] ${decision_id} seller answered HTTP ${res.status} in ${Date.now() - started} ms`);
     // Keep the exact bytes: Delivery Review hashes and measures them.
     const text = await res.text().catch(() => "");
     delivered = { text, latency_ms: Date.now() - started, status: res.status };

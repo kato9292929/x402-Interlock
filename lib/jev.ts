@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { TypeSafeClient, type Question, type Questions } from "@typesafe-ai/sdk";
 
-// Jev (TypeSafe's System One model) answers bounded questions about a state: a yes/no
+// Jev (TypeSafe's System One model), or another server with the same /v1/systemone contract
+// (spec/07 provider switch: Clef, self-hosted), answers bounded questions about a state: a yes/no
 // probability (noul), a choice among labels, or a score on a rubric. Interlock uses it for
 // meaning only (spec/07, principle 1): budgets, payees, limits and signatures stay in code.
 //
@@ -23,6 +24,8 @@ export type JevAnswer =
 export type JevResult =
   | {
       status: "OK";
+      /** which configured provider answered (config/appe-thresholds.json providers) */
+      provider?: string;
       /** The model string the API returned: always recorded, for reproducibility. */
       model: string;
       answers: Record<string, JevAnswer>;
@@ -33,6 +36,18 @@ export type JevResult =
   | { status: "UNAVAILABLE"; reason: string; latency_ms: number; model?: undefined };
 
 export interface JevOptions {
+  /** Name of the provider, recorded with every answer. Default "typesafe". */
+  provider?: string;
+  /** Server base URL. Unset: TYPESAFE_BASE_URL or https://api.typesafe.ai (typesafe only). */
+  baseURL?: string;
+  /**
+   * The bearer key. undefined: TYPESAFE_API_KEY (typesafe only). null: the server needs none.
+   * Any provider other than the default always passes a value here, so the TypeSafe key can
+   * never be sent to another server by the SDK's own environment fallback.
+   */
+  apiKey?: string | null;
+  /** Set when the provider is not usable (e.g. its URL is not configured): UNAVAILABLE with this reason. */
+  unavailable?: string;
   model?: string;
   timeoutMs?: number;
   retries?: number;
@@ -91,12 +106,17 @@ export function questionProblem(questions: Questions): string | undefined {
 export async function callJev(state: Record<string, unknown>, questions: Questions, opts: JevOptions = {}): Promise<JevResult> {
   const started = Date.now();
   const unavailable = (reason: string): JevResult => ({ status: "UNAVAILABLE", reason, latency_ms: Date.now() - started });
-  const apiKey = process.env.TYPESAFE_API_KEY;
-  if (!apiKey) return unavailable("TYPESAFE_API_KEY is not set");
+  if (opts.unavailable) return unavailable(opts.unavailable);
+  const provider = opts.provider ?? "typesafe";
+  if (opts.apiKey === undefined && provider !== "typesafe") return unavailable(`no API key setting for provider ${provider}`);
+  const apiKey = opts.apiKey === undefined ? process.env.TYPESAFE_API_KEY : opts.apiKey;
+  if (apiKey !== null && !apiKey) return unavailable(opts.apiKey === undefined ? "TYPESAFE_API_KEY is not set" : `empty API key for provider ${provider}`);
+  const baseURL = opts.baseURL ?? (provider === "typesafe" ? process.env.TYPESAFE_BASE_URL || undefined : undefined);
+  if (!baseURL && provider !== "typesafe") return unavailable(`no base URL for provider ${provider}`);
   const bad = questionProblem(questions);
   if (bad) return unavailable(bad);
   const model = opts.model ?? "jev-latest";
-  const key = createHash("sha256").update(JSON.stringify([model, state, questions])).digest("hex");
+  const key = createHash("sha256").update(JSON.stringify([provider, baseURL ?? "", model, state, questions])).digest("hex");
   const cacheMs = opts.cacheMs ?? 0;
   const hit = cache.get(key);
   if (cacheMs > 0 && hit && Date.now() - hit.at < cacheMs) return { ...hit.result, cached: true, latency_ms: Date.now() - started };
@@ -104,8 +124,10 @@ export async function callJev(state: Record<string, unknown>, questions: Questio
   let body: unknown;
   try {
     const client = new TypeSafeClient({
-      apiKey,
-      baseURL: process.env.TYPESAFE_BASE_URL || undefined,
+      // A server that needs no key still gets a placeholder: the SDK would otherwise read
+      // TYPESAFE_API_KEY from the environment and send it there.
+      apiKey: apiKey ?? "unused",
+      baseURL,
       defaultModel: model,
       logLevel: "off",
       timeout: opts.timeoutMs ?? 3000,
@@ -129,7 +151,7 @@ export async function callJev(state: Record<string, unknown>, questions: Questio
     if (problem) return unavailable(`answer ${name}: ${problem}`);
     answers[name] = b.answers[name] as JevAnswer;
   }
-  const result = { status: "OK" as const, model: b.model, answers, usage: b.usage, latency_ms: Date.now() - started };
+  const result = { status: "OK" as const, provider, model: b.model, answers, usage: b.usage, latency_ms: Date.now() - started };
   if (cacheMs > 0) cache.set(key, { at: Date.now(), result });
   return result;
 }

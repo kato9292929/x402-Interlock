@@ -286,9 +286,47 @@ labels are `owner_label` ledger events). `npm run appe-metrics` then reports the
 separately, the probability ranges per label, and candidate rules for **both wordings of the
 necessity question** ("necessary" and "necessary or useful", asked in separate calls on the same
 purchases). It decides nothing; the owner chooses and records the reason in
-`config/appe-thresholds.json`.
+`config/appe-thresholds.json`. A set of labels the owner withdraws is closed off with
+`npm run appe-label -- --reset --reason "..."` (an `owner_label_reset` event; earlier labels stay in
+the ledger but no longer count). The first labelling pass (2026-10-05) was keyed at random and has
+been withdrawn this way; **stage 4 has no valid labels yet**.
 
-`npm run jev-probe` makes one live call with a synthetic state and checks the response shape.
+**Boundary-only labelling** (2026-10-05). `npm run appe-label -- --boundary` asks only about
+purchases whose "necessary or useful" probability is between 0.30 and 0.85 for any judge; the
+others are skipped, are **not** labelled automatically, and are left out of
+`npm run appe-metrics -- --boundary`, which prints 「境界のみで n 件」 and how many were left out
+above and below. Boundary numbers say nothing about purchases a judge was sure about, nor about
+thresholds outside the range, so in that mode only "necessary or useful" rules with thresholds
+inside it are listed. The brief's minimum of 30 labelled purchases still applies to the boundary
+set.
+
+**Judge model is a setting** (2026-10-05). `config/appe-thresholds.json` `jev.provider` picks
+`typesafe` (Jev, `POST https://api.typesafe.ai/v1/systemone`, `jev-1.13.0`) or `clef` (a server the
+owner runs with the same `/v1/systemone` contract; `CLEF_BASE_URL`, `CLEF_API_KEY` only if it asks
+for one). The provider is recorded with every review (`jev_provider`), and the model pin works the
+same way for both. A provider with no key setting gets a placeholder key, so the TypeSafe key is
+never sent to another server. To compare on the same purchases without buying again:
+`npm run appe-compare -- --provider typesafe` and `-- --provider clef` rebuild each review's state
+from the ledger (the state hash matches the live one for reviews recorded from now on; older ones
+are marked "rebuilt"), ask both wordings, and append `spend_guard_replay` events (probabilities,
+model, state hash; not the state). `npm run appe-metrics -- --source clef` scores one judge;
+with replays present it also lists every judge's ranges on the same purchases. The decision
+between them is made on the owner's labels, not on benchmarks. **Clef has not been run here**:
+no Clef server was available, so only a local stand-in with the same contract was used.
+
+**Known gap, seen live (2026-10-05): a retried purchase while the first is still in flight is paid
+twice.** During the stage 4 run, two payment requests hung for over 5 minutes (the Allowance pull
+waiting for a WebSocket confirmation) and the run script retried them. Both first requests later
+completed, so `weather-tokyo` (venue task) and `crypto-news` (eth task) were each paid twice
+(0.02 USDC each; task usage 0.16 and 0.10 instead of 0.14 and 0.08). Nothing in the gate stopped
+the second request: the repurchase rule and Spend Guard's history only see completed payments.
+Fixed so far: the script never retries a payment request, and every Solana send is bounded (60 s,
+then recorded as unconfirmed). Not fixed yet: the gate itself treating an in-flight purchase of the
+same target as a duplicate; that is spec/07 section 8 (reserve, confirm, release; no double
+purchase on retry).
+
+`npm run jev-probe` makes one live call with a synthetic state and checks the response shape
+(`npm run jev-probe -- --provider clef` for a Clef server: it prints the model string it returns).
 `npm run why` and the agent's output show the shadow result per payment.
 
 | Spend Guard part | Status |

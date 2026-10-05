@@ -52,6 +52,28 @@ export interface AllowanceChain {
 // `sendTransaction()` plans, simulates, signs, sends and waits for confirmation. A failure
 // throws a kit SolanaError whose context carries the program `logs` and whose `cause` is the
 // transaction error; callers print it with formatSolanaError() (lib/solana/errors.ts).
+// The confirmation wait (over the RPC WebSocket) can hang on the public devnet endpoint. Every
+// send is bounded; a timed-out send is SolanaSendTimeout: the transaction may or may not have
+// landed (spec/07 principle 6), so callers record it as unconfirmed and never resend blindly.
+const sendTimeoutMs = () => Number(process.env.SOLANA_SEND_TIMEOUT_MS ?? 60_000);
+export class SolanaSendTimeout extends Error {}
+async function bounded<T>(what: string, send: (cfg: { abortSignal: AbortSignal }) => Promise<T>): Promise<T> {
+  const ms = sendTimeoutMs();
+  const started = Date.now();
+  try {
+    const r = await send({ abortSignal: AbortSignal.timeout(ms) });
+    console.log(`[solana] ${what} confirmed in ${Date.now() - started} ms`);
+    return r;
+  } catch (e) {
+    const name = (e as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      console.log(`[solana] ${what}: no confirmation within ${ms} ms`);
+      throw new SolanaSendTimeout(`${what}: no confirmation within ${ms} ms; it may still land. Check the chain before trying again.`);
+    }
+    throw e;
+  }
+}
+
 function clientFor(rpcUrl: string, as: KeyPairSigner) {
   return createClient()
     .use(signer(as))
@@ -102,15 +124,14 @@ export class SolanaAllowanceChain implements AllowanceChain {
       nonce: p.nonce,
     });
     // delegator = the client's identity (the owner); the plugin reads the SA's init id itself.
-    const { context } = await clientFor(this.rpcUrl, owner)
-      .subscriptions.instructions.createFixedDelegation({
-        delegatee: address(p.delegatee),
-        tokenMint,
-        nonce: p.nonce,
-        amount: p.amount,
-        expiryTs: p.expiryTs,
-      })
-      .sendTransaction();
+    const ix = clientFor(this.rpcUrl, owner).subscriptions.instructions.createFixedDelegation({
+      delegatee: address(p.delegatee),
+      tokenMint,
+      nonce: p.nonce,
+      amount: p.amount,
+      expiryTs: p.expiryTs,
+    });
+    const { context } = await bounded("create allowance", (cfg) => ix.sendTransaction(cfg));
     return { address: delegation, signature: context.signature };
   }
 
@@ -124,9 +145,8 @@ export class SolanaAllowanceChain implements AllowanceChain {
 
   async revoke(allowance: string) {
     // authority = the client's identity (the owner, who is the delegator).
-    const { context } = await clientFor(this.rpcUrl, await ownerSigner())
-      .subscriptions.instructions.revokeDelegation({ delegationAccount: address(allowance) })
-      .sendTransaction();
+    const ix = clientFor(this.rpcUrl, await ownerSigner()).subscriptions.instructions.revokeDelegation({ delegationAccount: address(allowance) });
+    const { context } = await bounded("revoke allowance", (cfg) => ix.sendTransaction(cfg));
     return { signature: context.signature };
   }
 
@@ -149,7 +169,7 @@ export class SolanaAllowanceChain implements AllowanceChain {
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
     });
     // Both in one transaction, so the gate's token account exists before the transfer.
-    const { context } = await client.sendTransaction([createGateAta, transfer]);
+    const { context } = await bounded("pull", (cfg) => client.sendTransaction([createGateAta, transfer], cfg));
     return { signature: context.signature };
   }
 
@@ -239,7 +259,7 @@ export class SolanaAllowanceChain implements AllowanceChain {
     if (existing.value) return { already_exists: true, seller, usdc_ata: ata };
     const owner = await ownerSigner();
     const ix = await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: owner, owner: address(seller), mint: tokenMint });
-    const { context } = await clientFor(this.rpcUrl, owner).sendTransaction([ix]);
+    const { context } = await bounded("seller token account", (cfg) => clientFor(this.rpcUrl, owner).sendTransaction([ix], cfg));
     return { signature: context.signature, seller, usdc_ata: ata };
   }
 
@@ -254,13 +274,12 @@ export class SolanaAllowanceChain implements AllowanceChain {
       return { already_initialized: true, subscription_authority: report.subscription_authority.address };
     }
     // owner = the client's identity.
-    const { context } = await clientFor(this.rpcUrl, await ownerSigner())
-      .subscriptions.instructions.initSubscriptionAuthority({
-        tokenMint: address(report.mint),
-        tokenProgram: TOKEN_PROGRAM_ADDRESS,
-        userAta: address(report.owner.usdc_ata),
-      })
-      .sendTransaction();
+    const ix = clientFor(this.rpcUrl, await ownerSigner()).subscriptions.instructions.initSubscriptionAuthority({
+      tokenMint: address(report.mint),
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      userAta: address(report.owner.usdc_ata),
+    });
+    const { context } = await bounded("init subscription authority", (cfg) => ix.sendTransaction(cfg));
     return { signature: context.signature, subscription_authority: report.subscription_authority.address };
   }
 }

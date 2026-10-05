@@ -2,22 +2,47 @@
 // Spend Guard in shadow mode, so the owner can label them (npm run appe-label).
 // Needs `npm run dev` running. A purchase the fixed rules send to the owner (a repeat within
 // 10 minutes) is cancelled here; Spend Guard has already reviewed it.
-// Run: npm run appe-eval-run            (all tasks)
-//      npm run appe-eval-run -- venue   (one task, by key)
+// Run: npm run appe-eval-run                  (all tasks)
+//      npm run appe-eval-run -- venue         (one task, by key)
+//      npm run appe-eval-run -- --from report (that task and the ones after it, after a stop)
 import { readFileSync } from "node:fs";
 
 const BASE = process.env.INTERLOCK_URL ?? "http://localhost:3000";
 const owner = { authorization: `Bearer ${process.env.OWNER_TOKEN ?? ""}`, "content-type": "application/json" };
 const agent = { authorization: `Bearer ${process.env.AGENT_TOKEN ?? ""}`, "content-type": "application/json" };
 const scenarios = JSON.parse(readFileSync("config/appe-eval-scenarios.json", "utf8")) as { tasks: { key: string; purpose: string; budget: string; buy: string[] }[] };
-const only = process.argv[2];
+const fromIdx = process.argv.indexOf("--from");
+const from = fromIdx > 0 ? process.argv[fromIdx + 1] : undefined;
+const only = from ? undefined : process.argv[2];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const why = (e: unknown) => {
+  const err = e as Error & { cause?: { code?: string; message?: string } };
+  return `${err.message}${err.cause ? ` (${err.cause.code ?? ""} ${err.cause.message ?? ""})` : ""}`;
+};
+
+/**
+ * One request, retried once after a pause if the connection itself fails. Only for requests that
+ * are safe to repeat (GET, cancel). Never for /api/gate/evaluate: a timed-out evaluate may still
+ * be paying on the server, and repeating it can pay twice (spec/07 principle 6).
+ */
+async function call(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    console.log(`  (connection failed: ${why(e)}; retrying in 5 s)`);
+    await sleep(5000);
+    return fetch(url, init);
+  }
+}
 const fmt = (v: unknown) => (typeof v === "number" ? v.toFixed(2) : "-");
 
 async function main() {
   const probe = await fetch(`${BASE}/api/tasks`, { headers: owner }).catch(() => null);
   if (!probe) throw new Error(`nothing answers at ${BASE}: start \`npm run dev\` in another terminal (from ~/x402-Interlock)`);
   if (probe.status === 401) throw new Error("the server refused OWNER_TOKEN: check .env.local, then restart npm run dev");
-  const tasks = scenarios.tasks.filter((t) => !only || t.key === only);
+  const start = from ? scenarios.tasks.findIndex((t) => t.key === from) : 0;
+  if (start < 0) throw new Error(`no task with key ${from}; keys: ${scenarios.tasks.map((t) => t.key).join(", ")}`);
+  const tasks = scenarios.tasks.slice(start).filter((t) => !only || t.key === only);
   if (!tasks.length) throw new Error(`no task with key ${only}; keys: ${scenarios.tasks.map((t) => t.key).join(", ")}`);
   let done = 0;
   const total = tasks.reduce((n, t) => n + t.buy.length, 0);
@@ -28,12 +53,20 @@ async function main() {
     console.log(`\n[${t.key}] ${task.task_id}  "${t.purpose}"  ${t.budget} USDC`);
     for (const item of t.buy) {
       const url = `${BASE}/api/seller/sol-catalog/${item}`;
-      const first = await fetch(url);
-      if (first.status !== 402) throw new Error(`${item}: seller answered ${first.status}, expected 402`);
-      const r = await fetch(`${BASE}/api/gate/evaluate`, { method: "POST", headers: agent, body: JSON.stringify({ task_id: task.task_id, action_type: "pay", payload: { url, purpose: item } }) });
+      let first: Response, r: Response;
+      try {
+        first = await call(url);
+        if (first.status !== 402) throw new Error(`seller answered ${first.status}, expected 402`);
+        r = await fetch(`${BASE}/api/gate/evaluate`, { method: "POST", headers: agent, body: JSON.stringify({ task_id: task.task_id, action_type: "pay", payload: { url, purpose: item } }) });
+      } catch (e) {
+        throw new Error(
+          `[${t.key}] ${item}: ${why(e)}\nNot retried: the server may still be paying for it. Check the npm run dev terminal ` +
+            `([pay] / [solana] lines), restart it if it stopped, then continue with: npm run appe-eval-run -- --from ${t.key}`,
+        );
+      }
       const v = await r.json();
       if (!r.ok) throw new Error(`evaluate ${item}: HTTP ${r.status} ${JSON.stringify(v)}`);
-      if (v.status === "AWAITING_HUMAN") await fetch(`${BASE}/api/approvals/${v.decision_id}/cancel`, { method: "POST", headers: agent, body: JSON.stringify({ reason: "appe_eval_run" }) });
+      if (v.status === "AWAITING_HUMAN") await call(`${BASE}/api/approvals/${v.decision_id}/cancel`, { method: "POST", headers: agent, body: JSON.stringify({ reason: "appe_eval_run" }) });
       const sg = v.spend_guard;
       done++;
       console.log(

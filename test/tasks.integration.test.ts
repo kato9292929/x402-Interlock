@@ -17,7 +17,7 @@ import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymen
 import { hashSignal } from "@worldcoin/idkit-core/hashing";
 import type { IDKitResult } from "@worldcoin/idkit-core";
 import { NextRequest } from "next/server";
-import { setAllowanceChain, snapshotFromAccount, type AllowanceChain } from "../lib/solana/allowance";
+import { setAllowanceChain, snapshotFromAccount, SolanaSendTimeout, type AllowanceChain } from "../lib/solana/allowance";
 import { setPaymentSignerForTests } from "../lib/signer";
 import { loadApprovalRequest } from "../lib/world";
 import { Ledger } from "../lib/ledger";
@@ -84,7 +84,9 @@ class FakeChain implements AllowanceChain {
     this.revoked.push(allowance);
     return { signature: `revoke_${allowance.slice(0, 8)}` };
   }
+  pullTimesOut = false;
   async pull(allowance: string, amount: bigint) {
+    if (this.pullTimesOut) throw new SolanaSendTimeout("pull: no confirmation within 60000 ms; it may still land.");
     const a = this.accounts.get(allowance);
     if (!a || a.amount < amount) throw new Error("insufficient allowance");
     a.amount -= amount;
@@ -413,6 +415,21 @@ test("Intercepta 429 -> BLOCK SCREENING_UNAVAILABLE, and the reply names the che
   }
 });
 
+test("a pull with no confirmation in time is recorded as unconfirmed; the seller is not paid", async () => {
+  const t = await openTask("1.00");
+  const paidBefore = paid.length;
+  chain.pullTimesOut = true;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "PAYMENT_FAILED");
+    const r = new Ledger().byDecision(v.decision_id).find((e) => e.event_type === "payment_result")!;
+    assert.equal(r.data.reason, "ALLOWANCE_PULL_UNCONFIRMED");
+    assert.equal(paid.length, paidBefore);
+  } finally {
+    chain.pullTimesOut = false;
+  }
+});
+
 test("budget used up: stops with ALLOWANCE_INSUFFICIENT (0.30 x 3 of 1.00, 4th blocked)", async () => {
   const t = await openTask("1.00");
   for (let i = 0; i < 3; i++) assert.equal((await pay(t.task_id)).status, "PAID");
@@ -593,6 +610,25 @@ test("shadow: a review is recorded with the model and policy version, and the pa
   const st = spendGuardStates.at(-1)!;
   assert.equal(st.task.purpose, "Make one music video");
   assert.ok(!st.candidate.url.includes("?"));
+});
+
+test("replay (appe-compare): the state rebuilt from the ledger is the one the live judge saw", async () => {
+  await freshJev();
+  const t = await openFor("Make one music video");
+  const first = await pay(t.task_id);
+  const second = await pay(t.task_id); // has the first in its history
+  for (const v of [first, second]) assert.equal(v.status, "PAID");
+  const { replayInput } = await import("../lib/appe-eval");
+  const { loadThresholds, spendGuardState, stateSha256 } = await import("../lib/appe");
+  const all = new Ledger().readAll();
+  const live = review(second.decision_id)!;
+  assert.match(String(live.state_sha256), /^[0-9a-f]{64}$/);
+  assert.equal(live.jev_provider, "typesafe");
+  const input = replayInput(all, second.decision_id, { task: (await tasks()).getTask, decimals: 6 });
+  assert.ok(!("error" in input));
+  const state = spendGuardState(input, loadThresholds());
+  assert.equal(state.history.length, 1);
+  assert.equal(stateSha256(state), live.state_sha256);
 });
 
 test("shadow: an unrelated purchase would have been blocked, but is paid (shadow never stops)", async () => {

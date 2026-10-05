@@ -130,3 +130,55 @@ test("identical requests are served from the cache when enabled", async () => {
   assert.equal(seen.length - before, 1);
   assert.equal(again.status === "OK" && again.cached, true);
 });
+
+test("another provider: its own URL and key; never the TypeSafe key, even when it takes none", async () => {
+  clearJevCache();
+  reply = () => ({ status: 200, json: { ...good, model: "clef-flash" } });
+  const url = process.env.TYPESAFE_BASE_URL!;
+  const r = await callJev({ a: 1 }, Q, { provider: "clef", baseURL: url, apiKey: "clef-key", model: "clef-flash", expectedModel: "clef-flash" });
+  assert.equal(r.status, "OK");
+  assert.equal(r.status === "OK" && r.provider, "clef");
+  assert.equal(seen.at(-1)!.auth, "Bearer clef-key");
+  clearJevCache();
+  const r2 = await callJev({ a: 2 }, Q, { provider: "clef", baseURL: url, apiKey: null, model: "clef-flash" });
+  assert.equal(r2.status, "OK");
+  assert.equal(seen.at(-1)!.auth, "Bearer unused");
+  assert.ok(!seen.some((x) => x.auth.includes("test-key") && (x.body.state as { a?: number }).a !== undefined));
+});
+
+test("another provider without a URL or key setting is UNAVAILABLE, not sent to TypeSafe", async () => {
+  const before = seen.length;
+  const noUrl = await callJev({ a: 3 }, Q, { provider: "clef", apiKey: null, model: "clef-flash" });
+  assert.equal(noUrl.status, "UNAVAILABLE");
+  const noKey = await callJev({ a: 3 }, Q, { provider: "clef", baseURL: process.env.TYPESAFE_BASE_URL, model: "clef-flash" });
+  assert.equal(noKey.status, "UNAVAILABLE");
+  const off = await callJev({ a: 3 }, Q, { provider: "clef", unavailable: "CLEF_BASE_URL is not set (provider clef)" });
+  assert.equal(off.status === "UNAVAILABLE" && off.reason, "CLEF_BASE_URL is not set (provider clef)");
+  assert.equal(seen.length, before);
+});
+
+test("judgeOptions: providers from config/appe-thresholds.json and the environment", async () => {
+  const { judgeOptions, loadThresholds } = await import("../lib/appe");
+  const t = loadThresholds();
+  assert.equal(t.jev.provider, "typesafe");
+  const ts = judgeOptions(t);
+  assert.equal(ts.unavailable, undefined);
+  assert.equal(ts.baseURL, process.env.TYPESAFE_BASE_URL);
+  assert.equal(ts.model, "jev-1.13.0");
+  const saved = { url: process.env.CLEF_BASE_URL, key: process.env.CLEF_API_KEY };
+  delete process.env.CLEF_BASE_URL;
+  delete process.env.CLEF_API_KEY;
+  try {
+    assert.match(String(judgeOptions(t, "clef").unavailable), /CLEF_BASE_URL is not set/);
+    process.env.CLEF_BASE_URL = "http://127.0.0.1:9";
+    const c = judgeOptions(t, "clef");
+    assert.equal(c.unavailable, undefined);
+    assert.equal(c.apiKey, null); // no key needed, and never the TypeSafe one
+    assert.equal(c.expectedModel, "clef-flash");
+    assert.match(String(judgeOptions(t, "nope").unavailable), /not in config/);
+  } finally {
+    if (saved.url === undefined) delete process.env.CLEF_BASE_URL;
+    else process.env.CLEF_BASE_URL = saved.url;
+    if (saved.key !== undefined) process.env.CLEF_API_KEY = saved.key;
+  }
+});
