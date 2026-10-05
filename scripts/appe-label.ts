@@ -5,11 +5,13 @@
 // Run: npm run appe-label              (with npm run appe-eval-run finished; labels are ledger events)
 //      npm run appe-label -- --review  (go through all of them again, Enter keeps a label, 1/2/3 changes it)
 //      npm run appe-label -- --reset   (withdraw every label so far; recorded in the ledger with the reason)
+//      npm run appe-label -- --boundary (only purchases with "necessary or useful" in 0.30-0.85 for any
+//                                        judge; the rest are skipped, not labelled, and left out of
+//                                        npm run appe-metrics -- --boundary. Combines with --review)
 import { emitKeypressEvents } from "node:readline";
 import { Ledger } from "../lib/ledger";
-import { reviewRows, taskLabels, type PurchaseLabel, type TaskLabel } from "../lib/appe-eval";
+import { BOUNDARY, boundaryOf, reviewRows, sellerDescription, taskLabels, type PurchaseLabel, type ReviewRow, type TaskLabel } from "../lib/appe-eval";
 import { getTask } from "../lib/tasks";
-import { readFileSync } from "node:fs";
 
 const KEYS: Record<string, PurchaseLabel> = { "1": "needed", "2": "unneeded", "3": "unsure", y: "needed", n: "unneeded", s: "unsure" };
 const TASK_KEYS: Record<string, TaskLabel> = { "1": "achieved", "2": "not_achieved", "3": "unsure", y: "achieved", n: "not_achieved", s: "unsure" };
@@ -30,21 +32,6 @@ function key(allowed: string[]): Promise<string> {
   });
 }
 
-/** The seller's description: recorded with the review, or (older reviews) from the seller config. */
-function describe(url: string, recorded: string | null): string | null {
-  if (recorded) return recorded;
-  try {
-    const p = new URL(url).pathname;
-    const cat = /^\/api\/seller\/sol-catalog\/([a-z0-9-]+)$/.exec(p);
-    if (cat) return (JSON.parse(readFileSync("config/eval-catalog.json", "utf8")) as { items: Record<string, { description: string }> }).items[cat[1]]?.description ?? null;
-    const name = /^\/api\/seller\/([a-z0-9-]+)$/.exec(p)?.[1];
-    const routes = (JSON.parse(readFileSync("config/prices.json", "utf8")) as { routes: Record<string, { description: string }> }).routes;
-    return name && routes[name] ? routes[name].description : null;
-  } catch {
-    return null;
-  }
-}
-
 async function main() {
   if (process.argv.includes("--reset")) {
     const i = process.argv.indexOf("--reason");
@@ -55,11 +42,20 @@ async function main() {
   }
   if (!process.stdin.isTTY) throw new Error("run this in a terminal (it reads single key presses)");
   const review = process.argv.includes("--review");
+  const boundary = process.argv.includes("--boundary");
   emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
   const ledger = new Ledger();
   const all = ledger.readAll();
-  const rows = reviewRows(all);
+  const everything = reviewRows(all);
+  const rows = boundary ? everything.filter((r) => boundaryOf(r) === "boundary") : everything;
+  if (boundary) {
+    const c = (k: string) => everything.filter((r) => boundaryOf(r) === k).length;
+    console.log(
+      `boundary only: "necessary or useful" ${BOUNDARY.low.toFixed(2)}-${BOUNDARY.high.toFixed(2)} for any judge (live or npm run appe-compare): ${rows.length} of ${everything.length}. ` +
+        `Skipped, not labelled: ${c("above")} above, ${c("below")} below, ${c("no_value")} with no answer.`,
+    );
+  }
   // Normal: the unlabelled ones. --review: every one, showing the current label, to change any.
   const list = review ? rows : rows.filter((r) => !r.label);
   const doneTasks = taskLabels(all);
@@ -73,7 +69,7 @@ async function main() {
     const amount = `${(Number(r.amount) / 1e6).toFixed(2)} USDC`;
     const current = labelOf(r.decision_id);
     console.log(`[${rows.indexOf(r) + 1}/${rows.length}] task: ${oneLine(task?.purpose ?? r.task_id, 70)}`);
-    console.log(`        buy:  ${new URL(r.url).pathname}  ${amount}  "${oneLine(describe(r.url, r.description), 90)}"`);
+    console.log(`        buy:  ${new URL(r.url).pathname}  ${amount}  "${oneLine(sellerDescription(r.url, r.description), 90)}"`);
     process.stdout.write(`        your call (1/2/3, b, q)${current ? ` [now: ${current}]` : ""}: `);
     const k = await key(allowed);
     if (k === "q") break;
@@ -90,11 +86,7 @@ async function main() {
     // The latest label for a purchase is the one that counts; earlier ones stay in the ledger.
     ledger.append(r.decision_id, "owner_label", { target_decision_id: r.decision_id, task_id: r.task_id, label: KEYS[k] });
     console.log(KEYS[k]);
-    console.log(
-      r.jev_status === "OK"
-        ? `        Jev:  necessity ${fmt(r.necessity)} (necessary or useful ${fmt(r.necessity_alt)})  duplicate ${fmt(r.duplicate)}  nature ${r.nature}  -> would_have ${r.would_have}\n`
-        : `        Jev:  UNAVAILABLE\n`,
-    );
+    console.log(judgeLines(r) + "\n");
     // Last purchase of this task in the list: ask about the task itself (or again, in review mode).
     const lastOfTask = !list.slice(i + 1).some((x) => x.task_id === r.task_id);
     if (lastOfTask && (review || !doneTasks.has(r.task_id))) {
@@ -109,9 +101,21 @@ async function main() {
     i++;
   }
   process.stdin.setRawMode(false);
-  const left = reviewRows(new Ledger().readAll()).filter((r) => !r.label).length;
-  console.log(left ? `\nstopped: ${left} still to label. Run npm run appe-label again to continue.` : "\nall labelled. Next: npm run appe-metrics  (to change a label: npm run appe-label -- --review)");
+  const after = reviewRows(new Ledger().readAll()).filter((r) => !boundary || boundaryOf(r) === "boundary");
+  const left = after.filter((r) => !r.label).length;
+  const flag = boundary ? " -- --boundary" : "";
+  console.log(left ? `\nstopped: ${left} still to label. Run npm run appe-label${flag} again to continue.` : `\nall labelled. Next: npm run appe-metrics${flag}  (to change a label: npm run appe-label -- --review${boundary ? " --boundary" : ""})`);
   process.exit(0);
+}
+
+/** Every judge's answer, shown after the label: the live one, then each replay. */
+function judgeLines(r: ReviewRow): string {
+  const line = (name: string, status: string, nec: number | null, alt: number | null, dup: number | null, nature: string | null) =>
+    status === "OK" ? `        ${name.padEnd(9)} necessary ${fmt(nec)}  or useful ${fmt(alt)}  duplicate ${fmt(dup)}  nature ${nature}` : `        ${name.padEnd(9)} ${status}`;
+  return [
+    line(`${r.provider}:`, r.jev_status, r.necessity, r.necessity_alt, r.duplicate, r.nature) + (r.jev_status === "OK" ? `  -> would_have ${r.would_have}` : ""),
+    ...Object.entries(r.replays).map(([p, j]) => line(`${p}*:`, j.status, j.necessity, j.necessity_alt, j.duplicate, j.nature)),
+  ].join("\n") + (Object.keys(r.replays).length ? "\n        (* = replay, npm run appe-compare)" : "");
 }
 
 /** The latest label in the ledger for one purchase (read fresh, so "b" shows what was just set). */

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { choice, noul } from "@typesafe-ai/sdk";
 import { fromAtomic } from "./amount";
-import { callJev, type JevResult } from "./jev";
+import { callJev, type JevOptions, type JevResult } from "./jev";
 import type { LedgerEvent } from "./ledger";
 
 // Agent Procurement Policy Engine (spec/07). This file: thresholds and Spend Guard.
@@ -14,7 +14,10 @@ import type { LedgerEvent } from "./ledger";
 export interface AppeThresholds {
   version: string;
   validated: boolean;
-  jev: { model: string; expected_model?: string; timeout_ms: number; retries: number; cache_minutes: number };
+  /** which provider answers in the gate, and the call limits */
+  jev: { provider: string; timeout_ms: number; retries: number; cache_minutes: number };
+  /** servers that speak POST /v1/systemone (Jev at TypeSafe, a self-hosted Clef) */
+  providers: Record<string, ProviderConfig>;
   spend_guard: {
     mode: "off" | "shadow";
     history_limit: number;
@@ -28,6 +31,36 @@ export interface AppeThresholds {
   delivery_review: { mode: "off" | "record"; body_max_bytes: number };
 }
 
+export interface ProviderConfig {
+  /** fixed base URL; base_url_env, when set in the environment, takes precedence */
+  base_url?: string;
+  base_url_env?: string;
+  api_key_env: string;
+  /** false for a self-hosted server that takes no key */
+  api_key_required: boolean;
+  model: string;
+  /** the model string the answer must come from; defaults to model */
+  expected_model?: string;
+  timeout_ms?: number;
+}
+
+/**
+ * Call options for one provider, from the config and the environment. A provider that is not
+ * usable (unknown name, URL or key missing) gives options whose every call is UNAVAILABLE with
+ * the reason, so a gate configured for it fails closed like any other judge failure.
+ */
+export function judgeOptions(t: AppeThresholds, name = t.jev.provider): JevOptions & { provider: string } {
+  const p = t.providers?.[name];
+  const base = { provider: name, retries: t.jev.retries, cacheMs: t.jev.cache_minutes * 60_000, timeoutMs: t.jev.timeout_ms };
+  if (!p) return { ...base, unavailable: `provider ${name} is not in config/appe-thresholds.json providers` };
+  const baseURL = (p.base_url_env && process.env[p.base_url_env]) || p.base_url;
+  const key = process.env[p.api_key_env] || null;
+  const opts = { ...base, baseURL, apiKey: key, model: p.model, expectedModel: p.expected_model ?? p.model, timeoutMs: p.timeout_ms ?? t.jev.timeout_ms };
+  if (!baseURL) return { ...opts, unavailable: `${p.base_url_env ?? "base_url"} is not set (provider ${name})` };
+  if (p.api_key_required && !key) return { ...opts, unavailable: `${p.api_key_env} is not set (provider ${name})` };
+  return opts;
+}
+
 export function loadThresholds(file = process.env.APPE_THRESHOLDS_PATH ?? path.join(process.cwd(), "config", "appe-thresholds.json")): AppeThresholds & { policy_version: string } {
   const raw = readFileSync(file, "utf8");
   const t = JSON.parse(raw) as AppeThresholds;
@@ -36,6 +69,7 @@ export function loadThresholds(file = process.env.APPE_THRESHOLDS_PATH ?? path.j
     throw new Error(`spend_guard.mode ${t.spend_guard.mode} is not available yet: only off or shadow (spec/07 section 4 comes first)`);
   }
   if (!["off", "record"].includes(t.delivery_review?.mode)) throw new Error(`delivery_review.mode must be off or record`);
+  if (!t.providers?.[t.jev?.provider]) throw new Error(`jev.provider ${t.jev?.provider} is not one of providers: ${Object.keys(t.providers ?? {}).join(", ")}`);
   // The version a decision was made under: the declared version plus the file's own hash.
   const policy_version = `${t.version}#${createHash("sha256").update(raw).digest("hex").slice(0, 12)}`;
   return { ...t, policy_version };
@@ -117,7 +151,11 @@ export interface SpendGuardReview {
   necessity_alt_prob?: number | null;
   necessity_alt_wording?: "necessary_or_useful";
   jev_status: JevResult["status"];
+  /** which provider was asked (config jev.provider) */
+  jev_provider: string;
   jev_model: string | null;
+  /** SHA-256 of the exact state the judge saw, so a later replay can tell it rebuilt the same one */
+  state_sha256: string;
   jev_reason?: string;
   necessity_prob: number | null;
   duplicate_prob: number | null;
@@ -147,22 +185,28 @@ export function wouldHave(r: JevResult, t: AppeThresholds): { would_have: WouldH
   return reasons.length ? { would_have: "ask_human", reasons } : { would_have: "none", reasons: [] };
 }
 
+export const stateSha256 = (state: unknown) => createHash("sha256").update(JSON.stringify(state)).digest("hex");
+
+/**
+ * Ask the Spend Guard questions about one state, and (when compare_necessity_wording is on, or
+ * `alt` is true) the other necessity wording in its own call, so the two cannot influence each
+ * other. Used live by spendGuardShadow and offline by the section 4 replay. Never throws.
+ */
+export async function askSpendGuard(state: object, t: AppeThresholds, opts: JevOptions, alt = !!t.spend_guard.compare_necessity_wording): Promise<{ r: JevResult; alt?: JevResult }> {
+  const fail = (e: unknown): JevResult => ({ status: "UNAVAILABLE", reason: (e as Error).message, latency_ms: 0 });
+  const s = state as Record<string, unknown>;
+  const [r, a] = await Promise.all([
+    callJev(s, SPEND_GUARD_QUESTIONS, opts).catch(fail),
+    alt ? callJev(s, { necessity: noul(NECESSITY_WORDINGS.necessary_or_useful) }, opts).catch(fail) : Promise.resolve(undefined),
+  ]);
+  return { r, alt: a };
+}
+
 /** Run Spend Guard in shadow mode. Never throws: any failure is an UNAVAILABLE review. */
 export async function spendGuardShadow(i: SpendGuardInput, t = loadThresholds()): Promise<SpendGuardReview> {
   const state = spendGuardState(i, t);
-  const jevOpts = {
-    model: t.jev.model,
-    expectedModel: t.jev.expected_model,
-    timeoutMs: t.jev.timeout_ms,
-    retries: t.jev.retries,
-    cacheMs: t.jev.cache_minutes * 60_000,
-  };
-  const fail = (e: unknown): JevResult => ({ status: "UNAVAILABLE", reason: (e as Error).message, latency_ms: 0 });
-  // The other wording goes in its own call, so the two answers cannot influence each other.
-  const [r, alt] = await Promise.all([
-    callJev(state, SPEND_GUARD_QUESTIONS, jevOpts).catch(fail),
-    t.spend_guard.compare_necessity_wording ? callJev(state, { necessity: noul(NECESSITY_WORDINGS.necessary_or_useful) }, jevOpts).catch(fail) : Promise.resolve(undefined),
-  ]);
+  const opts = judgeOptions(t);
+  const { r, alt } = await askSpendGuard(state, t, opts);
   const w = wouldHave(r, t);
   const ok = r.status === "OK";
   return {
@@ -172,7 +216,9 @@ export async function spendGuardShadow(i: SpendGuardInput, t = loadThresholds())
       ? { necessity_alt_prob: alt.status === "OK" ? (alt.answers.necessity as { noul: number }).noul : null, necessity_alt_wording: "necessary_or_useful" as const }
       : {}),
     jev_status: r.status,
+    jev_provider: opts.provider,
     jev_model: ok ? r.model : null,
+    state_sha256: stateSha256(state),
     ...(ok ? {} : { jev_reason: r.reason }),
     necessity_prob: ok ? (r.answers.necessity as { noul: number }).noul : null,
     duplicate_prob: ok ? (r.answers.duplicate as { noul: number }).noul : null,

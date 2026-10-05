@@ -6,16 +6,33 @@
     "Jev probabilities are the model's answer distribution, not the probability that a payment is safe (principle 3).",
     "jev.model / jev.expected_model: pinned 2026-10-03 after the first live call (npm run jev-probe on the owner's Mac: HTTP 200, all three answer shapes as the SDK documents, model returned jev-1.13.0). The key's model list shows only jev-latest and jev-preview, so whether jev-1.13.0 is accepted as a request name is checked by the next probe. Either way, an answer from any model other than expected_model is UNAVAILABLE, so a silent version change cannot enter the record.",
     "delivery_review: record only (spec/07 section 5). It never refunds or reverses a payment and is not a seller score. body_max_bytes: how much of the purchased body Jev sees; the ledger keeps only its SHA-256 and size.",
-    "spend_guard.compare_necessity_wording: during the section 4 check, each purchase is also asked \"necessary or useful\" in a separate call and recorded as necessity_alt_prob; would_have still uses the current wording."
+    "spend_guard.compare_necessity_wording: during the section 4 check, each purchase is also asked \"necessary or useful\" in a separate call and recorded as necessity_alt_prob; would_have still uses the current wording.",
+    "jev.provider picks the judge model's server from providers (added 2026-10-05). Both speak POST {base}/v1/systemone with noul / choice / score and return model / answers / usage. typesafe: the hosted Jev API. clef: a server the owner runs (CLEF_BASE_URL; CLEF_API_KEY only if that server asks for one). The clef model name is the one the owner gave; it has not been checked against a running server here, and the pin works as for Jev: an answer from any other model string is UNAVAILABLE. Which one to use is decided in the section 4 check on the owner's own labels (npm run appe-compare), not from benchmarks."
   ],
   "version": "2026-10-03-provisional-jev-1.13.0",
   "validated": false,
   "jev": {
-    "model": "jev-1.13.0",
-    "expected_model": "jev-1.13.0",
+    "provider": "typesafe",
     "timeout_ms": 3000,
     "retries": 1,
     "cache_minutes": 10
+  },
+  "providers": {
+    "typesafe": {
+      "base_url": "https://api.typesafe.ai",
+      "base_url_env": "TYPESAFE_BASE_URL",
+      "api_key_env": "TYPESAFE_API_KEY",
+      "api_key_required": true,
+      "model": "jev-1.13.0",
+      "expected_model": "jev-1.13.0"
+    },
+    "clef": {
+      "base_url_env": "CLEF_BASE_URL",
+      "api_key_env": "CLEF_API_KEY",
+      "api_key_required": false,
+      "model": "clef-flash",
+      "expected_model": "clef-flash"
+    }
   },
   "spend_guard": {
     "mode": "shadow",

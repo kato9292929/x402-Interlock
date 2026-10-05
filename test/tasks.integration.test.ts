@@ -612,6 +612,25 @@ test("shadow: a review is recorded with the model and policy version, and the pa
   assert.ok(!st.candidate.url.includes("?"));
 });
 
+test("replay (appe-compare): the state rebuilt from the ledger is the one the live judge saw", async () => {
+  await freshJev();
+  const t = await openFor("Make one music video");
+  const first = await pay(t.task_id);
+  const second = await pay(t.task_id); // has the first in its history
+  for (const v of [first, second]) assert.equal(v.status, "PAID");
+  const { replayInput } = await import("../lib/appe-eval");
+  const { loadThresholds, spendGuardState, stateSha256 } = await import("../lib/appe");
+  const all = new Ledger().readAll();
+  const live = review(second.decision_id)!;
+  assert.match(String(live.state_sha256), /^[0-9a-f]{64}$/);
+  assert.equal(live.jev_provider, "typesafe");
+  const input = replayInput(all, second.decision_id, { task: (await tasks()).getTask, decimals: 6 });
+  assert.ok(!("error" in input));
+  const state = spendGuardState(input, loadThresholds());
+  assert.equal(state.history.length, 1);
+  assert.equal(stateSha256(state), live.state_sha256);
+});
+
 test("shadow: an unrelated purchase would have been blocked, but is paid (shadow never stops)", async () => {
   await freshJev();
   const t = await openFor("Prepare the quarterly tax filing");
