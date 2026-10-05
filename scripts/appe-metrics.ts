@@ -47,11 +47,23 @@ console.log("   unneeded caught:  of purchases the owner called unneeded, share 
 console.log("   blocked→needed:   of purchases the rule would block, share the owner called needed (metric 2, lower is better)");
 console.log("   asks:             extra owner checks the rule adds\n");
 console.log("   rule                                                                   judged flagged flagged→unneeded unneeded caught blocked blocked→needed asks");
+// Rows with nothing judged are left out, and a rule whose numbers equal the row above is folded
+// into it, so the table stays readable.
+let skipped = 0;
+let prev = "";
 for (const rule of [current, ...candidateRules(t.spend_guard.duplicate_ask)]) {
   const s = scoreRule(rows, rule);
   const tag = rule === current ? " <- current (provisional)" : "";
+  const sig = `${rule.wording}|${s.judged}|${s.flagged}|${s.flagged_unneeded_share}|${s.unneeded_caught}|${s.blocked}|${s.blocked_needed_share}|${s.asks}`;
+  if (rule !== current && (s.judged === 0 || sig === prev)) {
+    skipped++;
+    continue;
+  }
+  prev = sig;
   console.log(`   ${ruleName(rule)}  ${String(s.judged).padStart(5)} ${String(s.flagged).padStart(7)}      ${pct(s.flagged_unneeded_share)}          ${pct(s.unneeded_caught)}     ${String(s.blocked).padStart(5)}      ${pct(s.blocked_needed_share)}     ${String(s.asks).padStart(3)}${tag}`);
 }
+
+if (skipped) console.log(`   (${skipped} more rules not shown: nothing labelled for them yet, or the same numbers as the row above)`);
 
 console.log("\n3. task completion (owner's answer per task)");
 const tl = [...taskLabels(all).values()];
