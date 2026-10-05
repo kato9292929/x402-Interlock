@@ -286,7 +286,10 @@ labels are `owner_label` ledger events). `npm run appe-metrics` then reports the
 separately, the probability ranges per label, and candidate rules for **both wordings of the
 necessity question** ("necessary" and "necessary or useful", asked in separate calls on the same
 purchases). It decides nothing; the owner chooses and records the reason in
-`config/appe-thresholds.json`.
+`config/appe-thresholds.json`. A set of labels the owner withdraws is closed off with
+`npm run appe-label -- --reset --reason "..."` (an `owner_label_reset` event; earlier labels stay in
+the ledger but no longer count). The first labelling pass (2026-10-05) was keyed at random and has
+been withdrawn this way; **stage 4 has no valid labels yet**.
 
 **Known gap, seen live (2026-10-05): a retried purchase while the first is still in flight is paid
 twice.** During the stage 4 run, two payment requests hung for over 5 minutes (the Allowance pull

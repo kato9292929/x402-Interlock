@@ -53,3 +53,10 @@ test("readiness needs 30 labelled with both classes; candidate rules cover both 
   assert.ok(rules.some((r) => r.wording === "necessary") && rules.some((r) => r.wording === "necessary_or_useful"));
   assert.ok(rules.every((r) => r.ask > r.block));
 });
+
+test("a reset withdraws every label before it", () => {
+  const withReset = [...events, ev("appe-labels", "owner_label_reset", { reason: "labelled at random" }), label("a", "unneeded")];
+  const rows = reviewRows(withReset);
+  assert.deepEqual(rows.map((r) => r.label), ["unneeded", undefined, undefined, undefined, undefined]);
+  assert.equal(taskLabels(withReset).size, 0);
+});

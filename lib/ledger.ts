@@ -16,6 +16,7 @@ export type LedgerEventType =
   | "delivery_review"
   | "owner_label"
   | "owner_task_label"
+  | "owner_label_reset"
   | "allowance_checked";
 
 export interface LedgerEvent {

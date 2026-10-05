@@ -24,10 +24,20 @@ export interface ReviewRow {
   label?: PurchaseLabel;
 }
 
+/** Labels count only after the latest owner_label_reset: the ledger is append-only, so a set of
+ * labels the owner withdraws is closed off by a reset event instead of being deleted. */
+function afterReset(events: LedgerEvent[]): LedgerEvent[] {
+  let last = -1;
+  events.forEach((e, i) => {
+    if (e.event_type === "owner_label_reset") last = i;
+  });
+  return events.slice(last + 1);
+}
+
 /** Every Spend Guard shadow review, oldest first, with the owner's label if there is one. */
 export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
   const labels = new Map<string, PurchaseLabel>();
-  for (const e of events) if (e.event_type === "owner_label") labels.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
+  for (const e of afterReset(events)) if (e.event_type === "owner_label") labels.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
   return events
     .filter((e) => e.event_type === "spend_guard_review" && e.data.mode === "shadow")
     .map((e) => {
@@ -54,7 +64,7 @@ export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
 
 export function taskLabels(events: LedgerEvent[]): Map<string, TaskLabel> {
   const m = new Map<string, TaskLabel>();
-  for (const e of events) if (e.event_type === "owner_task_label") m.set(String(e.data.task_id), e.data.label as TaskLabel);
+  for (const e of afterReset(events)) if (e.event_type === "owner_task_label") m.set(String(e.data.task_id), e.data.label as TaskLabel);
   return m;
 }
 

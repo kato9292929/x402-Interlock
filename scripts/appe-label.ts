@@ -4,6 +4,7 @@
 // When every purchase of a task is labelled, it asks whether the task's purpose was met.
 // Run: npm run appe-label              (with npm run appe-eval-run finished; labels are ledger events)
 //      npm run appe-label -- --review  (go through all of them again, Enter keeps a label, 1/2/3 changes it)
+//      npm run appe-label -- --reset   (withdraw every label so far; recorded in the ledger with the reason)
 import { emitKeypressEvents } from "node:readline";
 import { Ledger } from "../lib/ledger";
 import { reviewRows, taskLabels, type PurchaseLabel, type TaskLabel } from "../lib/appe-eval";
@@ -45,6 +46,13 @@ function describe(url: string, recorded: string | null): string | null {
 }
 
 async function main() {
+  if (process.argv.includes("--reset")) {
+    const i = process.argv.indexOf("--reason");
+    const reason = i > 0 ? process.argv[i + 1] : "withdrawn by the owner";
+    new Ledger().append("appe-labels", "owner_label_reset", { reason });
+    console.log(`all labels so far withdrawn (${reason}); they stay in the ledger but no longer count. Run npm run appe-label to start again.`);
+    return;
+  }
   if (!process.stdin.isTTY) throw new Error("run this in a terminal (it reads single key presses)");
   const review = process.argv.includes("--review");
   emitKeypressEvents(process.stdin);
