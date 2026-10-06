@@ -228,7 +228,9 @@ before(async () => {
       }
       const { state } = parsed;
       spendGuardStates.push(state);
-      const related = /music video/i.test(state.task.purpose) && /clip|render/i.test(String(state.candidate.description));
+      const related =
+        (/music video/i.test(state.task.purpose) && /clip|render/i.test(String(state.candidate.description))) ||
+        (/streaming report/i.test(state.task.purpose) && /stats/i.test(state.candidate.url));
       const dup = state.history.some((h) => h.url === state.candidate.url);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -664,20 +666,38 @@ test("actions on a closed task are blocked", async () => {
 // ---------------------------------------------------------------------------
 
 const freshJev = async () => (await import("../lib/jev")).clearJevCache(); // identical states are cached on purpose
+
+/** Run with config/appe-thresholds.json changed by `patch` (spend_guard fields), then restore. */
+async function withSpendGuard<T>(patch: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  const base = JSON.parse(readFileSync(path.join(process.cwd(), "config", "appe-thresholds.json"), "utf8"));
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "appe-")), "appe-thresholds.json");
+  writeFileSync(file, JSON.stringify({ ...base, spend_guard: { ...base.spend_guard, ...patch } }));
+  const saved = process.env.APPE_THRESHOLDS_PATH;
+  process.env.APPE_THRESHOLDS_PATH = file;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.APPE_THRESHOLDS_PATH;
+    else process.env.APPE_THRESHOLDS_PATH = saved;
+  }
+}
+const SHADOW = { mode: "shadow", duplicate_ask: 0.5 };
 const review = (decision_id: string) => new Ledger().byDecision(decision_id).find((e) => e.event_type === "spend_guard_review")?.data;
 const openFor = async (purpose: string, amount = "1.00") =>
   (await tasks()).openTask({ purpose, budget: { amount, asset: "USDC" }, expires_at: inAnHour() });
 
-test("shadow: a review is recorded with the model and policy version, and the payment still goes through", async () => {
+test("a review is recorded with the model and policy version; a needed purchase is paid without asking", async () => {
   await freshJev();
   const t = await openTask("1.00");
   const v = await pay(t.task_id);
   assert.equal(v.status, "PAID");
   const r = review(v.decision_id)!;
-  assert.equal(r.mode, "shadow");
+  assert.equal(r.mode, "confirm");
+  assert.equal(r.decision_wording, "necessary_or_useful");
+  assert.equal(r.asked_owner, false);
   assert.equal(r.jev_status, "OK");
   assert.equal(r.jev_model, "jev-1.13.0");
-  assert.match(String(r.policy_version), /^2026-10-03-provisional-jev-1\.13\.0#[0-9a-f]{12}$/);
+  assert.match(String(r.policy_version), /^2026-10-06-validated-jev-1\.13\.0#[0-9a-f]{12}$/);
   assert.equal(r.would_have, "none");
   assert.equal(r.actual_decision, "PAY");
   assert.equal(typeof r.necessity_prob, "number");
@@ -710,7 +730,7 @@ test("replay (appe-compare): the state rebuilt from the ledger is the one the li
 test("shadow: an unrelated purchase would have been blocked, but is paid (shadow never stops)", async () => {
   await freshJev();
   const t = await openFor("Prepare the quarterly tax filing");
-  const v = await pay(t.task_id);
+  const v = await withSpendGuard(SHADOW, () => pay(t.task_id));
   assert.equal(v.status, "PAID");
   const r = review(v.decision_id)!;
   assert.equal(r.would_have, "block");
@@ -721,8 +741,8 @@ test("shadow: an unrelated purchase would have been blocked, but is paid (shadow
 test("shadow: the same target again in one task -> history carries it and duplicate_prob rises", async () => {
   await freshJev();
   const t = await openTask("1.00");
-  const first = review((await pay(t.task_id)).decision_id)!;
-  const second = review((await pay(t.task_id)).decision_id)!;
+  const first = review((await withSpendGuard(SHADOW, () => pay(t.task_id))).decision_id)!;
+  const second = review((await withSpendGuard(SHADOW, () => pay(t.task_id))).decision_id)!;
   assert.equal(first.exact_repeat, false);
   assert.equal(second.exact_repeat, true);
   assert.equal(second.history_count, 1);
@@ -739,7 +759,7 @@ test("shadow: Jev down -> UNAVAILABLE recorded, would_have ask_human, the paymen
   const t = await openTask("1.00");
   typesafeDown = true;
   try {
-    const v = await pay(t.task_id);
+    const v = await withSpendGuard(SHADOW, () => pay(t.task_id));
     assert.equal(v.status, "PAID");
     const r = review(v.decision_id)!;
     assert.equal(r.jev_status, "UNAVAILABLE");
@@ -770,6 +790,104 @@ test("an existing BLOCK stays a BLOCK whatever Spend Guard says", async () => {
   const v = await pay(small.task_id);
   assert.deepEqual(v.reasons, ["ALLOWANCE_INSUFFICIENT"]);
   assert.equal(review(v.decision_id), undefined);
+});
+
+// Stage 5, confirm mode (spec/08): Spend Guard asks the owner, never blocks.
+const decisionLabel = (decision_id: string) => new Ledger().byDecision(decision_id).find((e) => e.event_type === "owner_decision_label")?.data;
+
+test("confirm: an unrelated purchase goes to the owner, not blocked and not paid; a rejection is kept as a label", async () => {
+  await freshJev();
+  const t = await openFor("Prepare the quarterly tax filing");
+  const paidBefore = paid.length;
+  const v = await pay(t.task_id);
+  assert.equal(v.decision, "ASK_HUMAN");
+  assert.equal(v.status, "AWAITING_HUMAN");
+  assert.ok(v.reasons.includes("SPEND_GUARD_UNNECESSARY"));
+  assert.equal(paid.length, paidBefore);
+  const r = review(v.decision_id)!;
+  assert.equal(r.would_have, "block"); // what an automatic block would do ...
+  assert.equal(r.asked_owner, true); // ... enforced only as a question to the owner
+  assert.equal(r.actual_decision, "ASK_HUMAN");
+  assert.equal((await gate()).view(v.decision_id).spend_guard?.asked_owner, true); // shown on the approval page
+  assert.equal((await gate()).reject(v.decision_id, "not for this task").status, "HUMAN_REJECTED");
+  const l = decisionLabel(v.decision_id)!;
+  assert.equal(l.label, "unneeded");
+  assert.equal(l.asked_by_spend_guard, true);
+  assert.deepEqual(l.other_reasons, []);
+  const { reviewRows } = await import("../lib/appe-eval");
+  const row = reviewRows(new Ledger().readAll()).find((x) => x.decision_id === v.decision_id)!;
+  assert.deepEqual([row.label, row.label_source], ["unneeded", "decision"]);
+});
+
+test("confirm: the owner approves -> paid, and the approval is kept as a 'needed' label", async () => {
+  await freshJev();
+  const t = await openFor("Prepare the quarterly tax filing");
+  const v = await pay(t.task_id);
+  assert.equal(v.status, "AWAITING_HUMAN");
+  const { view } = await (await gate()).approve(v.decision_id, proofFor(v.decision_id));
+  assert.equal(view.status, "PAID");
+  assert.equal(decisionLabel(v.decision_id)!.label, "needed");
+});
+
+test("confirm: Jev down -> asked (fail closed), never paid automatically", async () => {
+  await freshJev();
+  const t = await openTask("1.00");
+  typesafeDown = true;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "AWAITING_HUMAN");
+    assert.deepEqual(v.reasons.filter((x) => x.startsWith("SPEND_GUARD")), ["SPEND_GUARD_UNAVAILABLE"]);
+  } finally {
+    typesafeDown = false;
+  }
+});
+
+test("confirm: a fixed-rule BLOCK stays a BLOCK; a repeat is left to the repurchase rule, not the duplicate question", async () => {
+  await freshJev();
+  const t = await openFor("Prepare the quarterly tax filing");
+  interceptaQuickScanStatus = 429;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "BLOCKED"); // Spend Guard would ask; the block stands
+    assert.equal(v.decision, "BLOCK");
+  } finally {
+    interceptaQuickScanStatus = 200;
+  }
+  const m = await openTask("1.00");
+  const url = `${sellerUrl}/sol-clip?confirm-repeat=1`;
+  assert.equal((await (await gate()).evaluate({ url, purpose: "clip", task_id: m.task_id, baseUrl: "http://x" })).status, "PAID");
+  const again = await (await gate()).evaluate({ url, purpose: "clip", task_id: m.task_id, baseUrl: "http://x" });
+  assert.equal(again.decision, "ASK_HUMAN");
+  assert.ok(again.reasons.includes("REPURCHASE_IN_WINDOW"));
+  assert.ok(!again.reasons.some((x) => x.startsWith("SPEND_GUARD")), again.reasons.join(","));
+  assert.ok(Number(review(again.decision_id)!.duplicate_prob) >= 0.5); // recorded, not used
+});
+
+test("confirm: thresholds that cannot be read -> asked, not paid (fail closed)", async () => {
+  const t = await openTask("1.00");
+  const saved = process.env.APPE_THRESHOLDS_PATH;
+  process.env.APPE_THRESHOLDS_PATH = path.join(tmpdir(), "no-such-appe-thresholds.json");
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "AWAITING_HUMAN");
+    assert.ok(v.reasons.includes("SPEND_GUARD_UNAVAILABLE"));
+  } finally {
+    if (saved === undefined) delete process.env.APPE_THRESHOLDS_PATH;
+    else process.env.APPE_THRESHOLDS_PATH = saved;
+  }
+});
+
+test("confirm needs validated: true; automatic blocking by Spend Guard is not a mode", async () => {
+  const { loadThresholds } = await import("../lib/appe");
+  const base = JSON.parse(readFileSync(path.join(process.cwd(), "config", "appe-thresholds.json"), "utf8"));
+  const dir = mkdtempSync(path.join(tmpdir(), "appe-"));
+  const write = (o: unknown) => {
+    const f = path.join(dir, `${Math.random()}.json`);
+    writeFileSync(f, JSON.stringify(o));
+    return f;
+  };
+  assert.throws(() => loadThresholds(write({ ...base, validated: false })), /needs validated: true/);
+  assert.throws(() => loadThresholds(write({ ...base, spend_guard: { ...base.spend_guard, mode: "enforce" } })), /off, shadow or confirm/);
 });
 
 // ---------------------------------------------------------------------------

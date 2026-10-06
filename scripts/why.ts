@@ -51,11 +51,12 @@ if (!s) {
   for (const k of s.skipped ?? []) console.log(`    ${k.check}: SKIPPED  ${k.code}  (${k.detail})`);
 }
 const sg = first("spend_guard_review")?.data as
-  | { would_have: string; would_have_reasons: string[]; jev_status: string; jev_model: string | null; jev_reason?: string; necessity_prob: number | null; duplicate_prob: number | null; nature: string | null; policy_version: string; exact_repeat: boolean; cached: boolean; latency_ms: number }
+  | { mode?: string; asked_owner?: boolean; necessity_alt_prob?: number | null; would_have: string; would_have_reasons: string[]; jev_status: string; jev_model: string | null; jev_reason?: string; necessity_prob: number | null; duplicate_prob: number | null; nature: string | null; policy_version: string; exact_repeat: boolean; cached: boolean; latency_ms: number }
   | undefined;
 if (sg) {
-  console.log(`  spend guard (shadow, did not change the decision): would_have ${sg.would_have}${sg.would_have_reasons.length ? ` (${sg.would_have_reasons.join(", ")})` : ""}`);
-  if (sg.jev_status === "OK") console.log(`    necessity ${sg.necessity_prob}  duplicate ${sg.duplicate_prob}  nature ${sg.nature}  exact_repeat ${sg.exact_repeat}  model ${sg.jev_model}${sg.cached ? " (cached)" : ""}  ${sg.latency_ms} ms`);
+  const how = sg.mode === "confirm" ? (sg.asked_owner ? "confirm: sent this payment to the owner" : "confirm: did not ask") : "shadow, did not change the decision";
+  console.log(`  spend guard (${how}): would_have ${sg.would_have}${sg.would_have_reasons.length ? ` (${sg.would_have_reasons.join(", ")})` : ""}`);
+  if (sg.jev_status === "OK") console.log(`    necessity ${sg.necessity_prob}  necessary or useful ${sg.necessity_alt_prob ?? "-"}  duplicate ${sg.duplicate_prob}  nature ${sg.nature}  exact_repeat ${sg.exact_repeat}  model ${sg.jev_model}${sg.cached ? " (cached)" : ""}  ${sg.latency_ms} ms`);
   else console.log(`    Jev UNAVAILABLE: ${sg.jev_reason}`);
   console.log(`    policy ${sg.policy_version}`);
 }

@@ -19,12 +19,20 @@ export interface AppeThresholds {
   /** servers that speak POST /v1/systemone (Jev at TypeSafe, a self-hosted Clef) */
   providers: Record<string, ProviderConfig>;
   spend_guard: {
-    mode: "off" | "shadow";
+    /**
+     * off: not asked. shadow: recorded only. confirm (stage 5, needs validated: true): a purchase
+     * Spend Guard would block or ask about goes to the owner (ASK_HUMAN); it is never blocked by
+     * Spend Guard, and nothing the fixed rules decided is loosened.
+     */
+    mode: "off" | "shadow" | "confirm";
+    /** which necessity answer would_have uses: "necessary" (main call) or "necessary_or_useful" (its own call) */
+    decision_wording?: "necessary" | "necessary_or_useful";
     history_limit: number;
     description_max_chars: number;
     necessity_pass: number;
     necessity_block: number;
-    duplicate_ask: number;
+    /** null: the duplicate question is recorded but not used (repeats are the fixed repurchase rule's) */
+    duplicate_ask: number | null;
     /** section 4: also ask the necessity question in its other wording, in a separate call */
     compare_necessity_wording?: boolean;
   };
@@ -64,10 +72,13 @@ export function judgeOptions(t: AppeThresholds, name = t.jev.provider): JevOptio
 export function loadThresholds(file = process.env.APPE_THRESHOLDS_PATH ?? path.join(process.cwd(), "config", "appe-thresholds.json")): AppeThresholds & { policy_version: string } {
   const raw = readFileSync(file, "utf8");
   const t = JSON.parse(raw) as AppeThresholds;
-  // Enforcement (spec/07 section 3-5) is a later stage and needs the section 4 check first.
-  if (!["off", "shadow"].includes(t.spend_guard.mode)) {
-    throw new Error(`spend_guard.mode ${t.spend_guard.mode} is not available yet: only off or shadow (spec/07 section 4 comes first)`);
+  // Enforcement (spec/07 section 3-5) needs the section 4 check first, and then only as "confirm":
+  // automatic blocking by Spend Guard is not available (spec/08).
+  if (!["off", "shadow", "confirm"].includes(t.spend_guard.mode)) {
+    throw new Error(`spend_guard.mode ${t.spend_guard.mode} is not available: off, shadow or confirm (spec/08: Spend Guard never blocks on its own yet)`);
   }
+  if (t.spend_guard.mode === "confirm" && t.validated !== true) throw new Error("spend_guard.mode confirm needs validated: true (spec/07 section 4)");
+  if (t.spend_guard.decision_wording && !["necessary", "necessary_or_useful"].includes(t.spend_guard.decision_wording)) throw new Error("spend_guard.decision_wording must be necessary or necessary_or_useful");
   if (!["off", "record"].includes(t.delivery_review?.mode)) throw new Error(`delivery_review.mode must be off or record`);
   if (!t.providers?.[t.jev?.provider]) throw new Error(`jev.provider ${t.jev?.provider} is not one of providers: ${Object.keys(t.providers ?? {}).join(", ")}`);
   // The version a decision was made under: the declared version plus the file's own hash.
@@ -144,7 +155,9 @@ export function spendGuardState(i: SpendGuardInput, t: AppeThresholds) {
 }
 
 export interface SpendGuardReview {
-  mode: "shadow";
+  mode: "shadow" | "confirm";
+  /** which necessity answer would_have used */
+  decision_wording: "necessary" | "necessary_or_useful";
   /** the seller's description as Jev saw it (truncated), so the owner can label the purchase */
   candidate_description: string | null;
   /** section 4 comparison: the same purchase asked "necessary or useful", in a separate call */
@@ -172,16 +185,18 @@ export interface SpendGuardReview {
 }
 
 /** What Spend Guard would have done (spec/07 section 3-5), from Jev's answers and the thresholds. */
-export function wouldHave(r: JevResult, t: AppeThresholds): { would_have: WouldHave; reasons: string[] } {
-  if (r.status !== "OK") return { would_have: "ask_human", reasons: ["SPEND_GUARD_UNAVAILABLE"] };
-  const nec = (r.answers.necessity as { noul: number }).noul;
+export function wouldHave(r: JevResult, t: AppeThresholds, alt?: JevResult): { would_have: WouldHave; reasons: string[] } {
+  const s = t.spend_guard;
+  const useAlt = s.decision_wording === "necessary_or_useful";
+  // Either answer missing (the one used for necessity, or the main one for nature): fail closed.
+  if (r.status !== "OK" || (useAlt && alt?.status !== "OK")) return { would_have: "ask_human", reasons: ["SPEND_GUARD_UNAVAILABLE"] };
+  const nec = ((useAlt ? alt! : r) as Extract<JevResult, { status: "OK" }>).answers.necessity as { noul: number };
   const dup = (r.answers.duplicate as { noul: number }).noul;
   const nature = (r.answers.nature as { choice: string }).choice;
-  const s = t.spend_guard;
-  if (nec < s.necessity_block || nature === "unrelated") return { would_have: "block", reasons: ["SPEND_GUARD_UNNECESSARY"] };
+  if (nec.noul < s.necessity_block || nature === "unrelated") return { would_have: "block", reasons: ["SPEND_GUARD_UNNECESSARY"] };
   const reasons: string[] = [];
-  if (nec < s.necessity_pass) reasons.push("SPEND_GUARD_UNNECESSARY");
-  if (dup >= s.duplicate_ask) reasons.push("SPEND_GUARD_DUPLICATE");
+  if (nec.noul < s.necessity_pass) reasons.push("SPEND_GUARD_UNNECESSARY");
+  if (s.duplicate_ask !== null && dup >= s.duplicate_ask) reasons.push("SPEND_GUARD_DUPLICATE");
   return reasons.length ? { would_have: "ask_human", reasons } : { would_have: "none", reasons: [] };
 }
 
@@ -192,7 +207,12 @@ export const stateSha256 = (state: unknown) => createHash("sha256").update(JSON.
  * `alt` is true) the other necessity wording in its own call, so the two cannot influence each
  * other. Used live by spendGuardShadow and offline by the section 4 replay. Never throws.
  */
-export async function askSpendGuard(state: object, t: AppeThresholds, opts: JevOptions, alt = !!t.spend_guard.compare_necessity_wording): Promise<{ r: JevResult; alt?: JevResult }> {
+export async function askSpendGuard(
+  state: object,
+  t: AppeThresholds,
+  opts: JevOptions,
+  alt = !!t.spend_guard.compare_necessity_wording || t.spend_guard.decision_wording === "necessary_or_useful",
+): Promise<{ r: JevResult; alt?: JevResult }> {
   const fail = (e: unknown): JevResult => ({ status: "UNAVAILABLE", reason: (e as Error).message, latency_ms: 0 });
   const s = state as Record<string, unknown>;
   const [r, a] = await Promise.all([
@@ -202,15 +222,16 @@ export async function askSpendGuard(state: object, t: AppeThresholds, opts: JevO
   return { r, alt: a };
 }
 
-/** Run Spend Guard in shadow mode. Never throws: any failure is an UNAVAILABLE review. */
+/** Run Spend Guard (shadow or confirm: the review is the same; the gate applies it). Never throws: any failure is an UNAVAILABLE review. */
 export async function spendGuardShadow(i: SpendGuardInput, t = loadThresholds()): Promise<SpendGuardReview> {
   const state = spendGuardState(i, t);
   const opts = judgeOptions(t);
   const { r, alt } = await askSpendGuard(state, t, opts);
-  const w = wouldHave(r, t);
+  const w = wouldHave(r, t, alt);
   const ok = r.status === "OK";
   return {
-    mode: "shadow",
+    mode: t.spend_guard.mode === "confirm" ? "confirm" : "shadow",
+    decision_wording: t.spend_guard.decision_wording ?? "necessary",
     candidate_description: state.candidate.description ? state.candidate.description.slice(0, 200) : null,
     ...(alt
       ? { necessity_alt_prob: alt.status === "OK" ? (alt.answers.necessity as { noul: number }).noul : null, necessity_alt_wording: "necessary_or_useful" as const }

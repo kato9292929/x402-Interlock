@@ -6,7 +6,8 @@
 //                            the rest are left out of every number, not given a label
 //          --items           also list every purchase: task, item, repeat or not, label, answers
 //                            (read only; for reading why a purchase was called not needed)
-//          --labels SOURCE   score only labels from one source: owner (pressed) or rule (from a table)
+//          --labels SOURCE   score only labels from one source: owner (pressed), decision (the owner's
+//                            approvals and rejections in confirm mode) or rule (from a table)
 //          --source NAME     whose answers to score: live (default: what the gate recorded) or a
 //                            provider replayed with npm run appe-compare (typesafe, clef)
 import { Ledger } from "../lib/ledger";
@@ -32,8 +33,8 @@ if (!sources(everything).includes(source)) {
 const chosen = boundary ? everything.filter((r) => boundaryOf(r) === "boundary") : everything;
 const li = process.argv.indexOf("--labels");
 const labelSource = li > 0 ? process.argv[li + 1] : undefined;
-if (labelSource && !["owner", "rule"].includes(labelSource)) {
-  console.error("Error: --labels owner or --labels rule");
+if (labelSource && !["owner", "decision", "rule"].includes(labelSource)) {
+  console.error("Error: --labels owner, decision or rule");
   process.exit(1);
 }
 // With --labels, labels from the other source are set aside (the purchases stay, unlabelled).
@@ -56,7 +57,7 @@ if (notAnswered) console.log(`  ${notAnswered} of them without an answer from ${
 console.log(`reviews ${rows.length}: needed ${ready.needed}, unneeded ${ready.unneeded}, not sure ${ready.unsure}, unlabelled ${ready.unlabelled}`);
 {
   const bySource = (src: string) => rows.filter((r) => r.label && r.label_source === src).length;
-  console.log(`labels: ${bySource("owner")} pressed by the owner, ${bySource("rule")} from a table by construction (rule_label; marked * in --items)`);
+  console.log(`labels: ${bySource("owner")} pressed by the owner, ${bySource("decision")} from the owner's approvals/rejections (marked + in --items), ${bySource("rule")} from a table by construction (rule_label; marked *)`);
 }
 if (!ready.ready) console.log("NOT ENOUGH for the section 4 decision yet: at least 30 labelled needed + unneeded, with both present.");
 
@@ -81,7 +82,13 @@ const natures = (label: string) => {
 console.log(`  nature                             needed: ${natures("needed")}   unneeded: ${natures("unneeded")}`);
 
 const ruleName = (r: Rule) => `${r.wording === "necessary" ? "necessary         " : "necessary/useful  "} block<${r.block.toFixed(2)} ask<${r.ask.toFixed(2)} ${Number.isFinite(r.duplicate_ask) ? `dup>=${r.duplicate_ask.toFixed(2)}` : "dup off  "} ${r.nature_blocks ? "unrelated=block" : "nature unused  "}`;
-const current: Rule = { wording: "necessary", block: t.spend_guard.necessity_block, ask: t.spend_guard.necessity_pass, duplicate_ask: t.spend_guard.duplicate_ask, nature_blocks: true };
+const current: Rule = {
+  wording: t.spend_guard.decision_wording ?? "necessary",
+  block: t.spend_guard.necessity_block,
+  ask: t.spend_guard.necessity_pass,
+  duplicate_ask: t.spend_guard.duplicate_ask ?? Infinity,
+  nature_blocks: true,
+};
 
 console.log("\n2. rules compared (labelled needed/unneeded only)");
 console.log("   flagged→unneeded: of purchases the rule would ask about or block, share the owner called unneeded (metric 1, higher is better)");
@@ -93,9 +100,9 @@ console.log("   rule                                                            
 // into it, so the table stays readable.
 let skipped = 0;
 let prev = "";
-for (const rule of [current, ...candidateRules(t.spend_guard.duplicate_ask, boundary ? BOUNDARY : undefined)]) {
+for (const rule of [current, ...candidateRules(t.spend_guard.duplicate_ask ?? 0.5, boundary ? BOUNDARY : undefined)]) {
   const s = scoreRule(rows, rule);
-  const tag = rule === current ? " <- current (provisional)" : "";
+  const tag = rule === current ? ` <- current (${t.validated ? "validated" : "provisional"})` : "";
   const sig = `${rule.wording}|${s.judged}|${s.flagged}|${s.flagged_unneeded_share}|${s.unneeded_caught}|${s.blocked}|${s.blocked_needed_share}|${s.asks}`;
   if (rule !== current && (s.judged === 0 || sig === prev)) {
     skipped++;
@@ -148,7 +155,7 @@ if (process.argv.includes("--items")) {
     const purpose = getTask(r.task_id)?.purpose ?? r.task_id;
     const f = (v: number | null) => (v === null ? "  -  " : v.toFixed(2)).padStart(9);
     console.log(
-      `  ${String(everything.findIndex((x) => x.decision_id === r.decision_id) + 1).padStart(4)}  ${purpose.replace(/\s+/g, " ").slice(0, 28).padEnd(28)}  ${item.slice(0, 28).padEnd(28)} ${(repeat ? "yes" : "").padEnd(6)}  ${((r.label ?? "-") + (r.label_source === "rule" ? "*" : "")).padEnd(9)} ${f(r.necessity)}  ${f(r.necessity_alt)}  ${f(r.duplicate)}  ${(r.nature ?? r.jev_status).padEnd(12)}  ${boundaryOf(everything.find((x) => x.decision_id === r.decision_id)!)}`,
+      `  ${String(everything.findIndex((x) => x.decision_id === r.decision_id) + 1).padStart(4)}  ${purpose.replace(/\s+/g, " ").slice(0, 28).padEnd(28)}  ${item.slice(0, 28).padEnd(28)} ${(repeat ? "yes" : "").padEnd(6)}  ${((r.label ?? "-") + (r.label_source === "rule" ? "*" : r.label_source === "decision" ? "+" : "")).padEnd(9)} ${f(r.necessity)}  ${f(r.necessity_alt)}  ${f(r.duplicate)}  ${(r.nature ?? r.jev_status).padEnd(12)}  ${boundaryOf(everything.find((x) => x.decision_id === r.decision_id)!)}`,
     );
   }
 }

@@ -233,11 +233,23 @@ different things. Everything above enforces the first in code (on-chain remainin
 screening, limits, signing, task state, deterministic matching). Spend Guard adds a judgement of
 meaning: is this purchase needed for the task, and does it repeat one already made?
 
-**Stage reached: 1–3 of 8 run on devnet; stage 4 (the check against the owner's judgement) tooling built, not yet run.** Jev call layer, Spend Guard in **shadow mode**, Delivery Review
-**recording**. Spend Guard
-records what it would have done and **never changes a payment**. Enforcement waits for the
-section 4 check (≥ 30 reviewed purchases compared with the owner's judgement); the code refuses any
-mode other than `off` or `shadow` until then. Procurement Router is not built yet.
+**Stage reached: 1–4 of 8 done; stage 5 in confirm mode (built, devnet run pending).** Spend
+Guard was checked against the owner's labels on 48 devnet purchases (spec/08) and now runs in
+**confirm mode**: a purchase it judges out of place goes to the owner (World ID) instead of being
+paid automatically. **It never blocks on its own**, it never loosens a fixed rule (a BLOCK stays a
+BLOCK), and when it cannot judge it asks (fail closed). The owner's approval or rejection is kept as
+a label (`owner_decision_label`) for the next check. Delivery Review is **record only**.
+Procurement Router is not built yet.
+
+**What the check showed, and its limits** ([`config/appe-thresholds.json`](config/appe-thresholds.json)
+`validation`): "necessary or useful" separates the owner's labels clearly (needed 0.61 / 0.80 /
+0.90, not needed 0.03 / 0.07 / 0.75, min / median / max). The rule "necessary or useful" < 0.50 or
+nature unrelated flagged 20 purchases, all not needed, and stopped none of the 23 needed ones. The
+one miss (`music-track` for a music video whose track already exists) needs information the task
+purpose does not give. **Checked only on made-up scenarios with clearly out-of-place purchases;
+subtle judgements on real purchases are not checked.** With 0 of 23, the rate of wrongly stopping a
+needed purchase is bounded at about 13% (95%), which is why Spend Guard only asks. The duplicate
+question is not used: exact repeats are the fixed repurchase rule's (`REPURCHASE_IN_WINDOW`).
 
 - **Jev** ([`lib/jev.ts`](lib/jev.ts)), via the official SDK `@typesafe-ai/sdk` 0.6.0:
   `POST /v1/systemone`, question types `noul` (yes/no probability), `choice` and `score`. (The
@@ -251,9 +263,12 @@ mode other than `off` or `shadow` until then. Procurement Router is not built ye
   in as JSON data; the question text says to judge it and never follow instructions inside it.
 - **Questions:** necessity (noul), duplicate (noul), nature (choice: direct / supporting /
   unrelated / not enough information).
-- **would_have**, from [`config/appe-thresholds.json`](config/appe-thresholds.json) (provisional
-  values from the brief, `validated: false`): necessity < 0.40 or nature "unrelated" → `block`;
-  necessity < 0.75 or duplicate ≥ 0.50 → `ask_human`; UNAVAILABLE → `ask_human`; else `none`.
+- **would_have**, from [`config/appe-thresholds.json`](config/appe-thresholds.json) (validated
+  2026-10-06): "necessary or useful" (asked in its own call) < 0.20 or nature "unrelated" →
+  `block`; < 0.50 → `ask_human`; UNAVAILABLE → `ask_human`; else `none`. In confirm mode both
+  `block` and `ask_human` become ASK_HUMAN with the reason codes; 0.20 is recorded as the line for a
+  future automatic block, which is not enabled. (Until 2026-10-06: the brief's provisional values,
+  "necessary" < 0.40 / < 0.75, duplicate ≥ 0.50, shadow only.)
 - **Ledger:** `spend_guard_review` next to each task payment decision: probabilities, nature,
   would_have and its reason codes (`SPEND_GUARD_UNNECESSARY` / `_DUPLICATE` / `_UNAVAILABLE`),
   the actual decision, `jev_model`, `policy_version` (version + hash of the thresholds file).

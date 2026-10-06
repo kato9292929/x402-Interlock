@@ -133,11 +133,11 @@ async function buy(name: string, cancelAfterMs: number, query: string): Promise<
   for (const c of (v.screening ?? []) as { check: string; verdict: string; http_status?: number; reasons: string[]; error?: string }[]) {
     console.log(`[gate]   screening ${c.check}: ${c.verdict}${c.http_status !== undefined ? ` (HTTP ${c.http_status})` : ""} ${c.reasons.join("; ")}${c.error ? ` [${c.error}]` : ""}`);
   }
-  const sg = v.spend_guard as { would_have: string; would_have_reasons: string[]; jev_status: string; necessity_prob: number | null; duplicate_prob: number | null; nature: string | null; jev_reason?: string } | undefined;
+  const sg = v.spend_guard as { mode?: string; asked_owner?: boolean; necessity_alt_prob?: number | null; would_have: string; would_have_reasons: string[]; jev_status: string; necessity_prob: number | null; duplicate_prob: number | null; nature: string | null; jev_reason?: string } | undefined;
   if (sg) {
     console.log(
-      `[gate]   spend guard (shadow): would_have ${sg.would_have}${sg.would_have_reasons.length ? ` (${sg.would_have_reasons.join(", ")})` : ""} ` +
-        (sg.jev_status === "OK" ? `necessity ${sg.necessity_prob} duplicate ${sg.duplicate_prob} nature ${sg.nature}` : `Jev UNAVAILABLE: ${sg.jev_reason}`),
+      `[gate]   spend guard (${sg.mode === "confirm" ? (sg.asked_owner ? "confirm, asked the owner" : "confirm") : "shadow"}): would_have ${sg.would_have}${sg.would_have_reasons.length ? ` (${sg.would_have_reasons.join(", ")})` : ""} ` +
+        (sg.jev_status === "OK" ? `necessary or useful ${sg.necessity_alt_prob ?? "-"} necessity ${sg.necessity_prob} duplicate ${sg.duplicate_prob} nature ${sg.nature}` : `Jev UNAVAILABLE: ${sg.jev_reason}`),
     );
   }
 

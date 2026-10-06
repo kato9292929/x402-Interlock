@@ -19,6 +19,10 @@ export type ReasonCode =
   | "PURCHASE_IN_FLIGHT"
   | "PREVIOUS_PAYMENT_UNCONFIRMED"
   | "PURCHASED_SINCE_DECISION"
+  // Spend Guard in confirm mode (spec/07 section 3-5, spec/08): asks the owner, never blocks
+  | "SPEND_GUARD_UNNECESSARY"
+  | "SPEND_GUARD_DUPLICATE"
+  | "SPEND_GUARD_UNAVAILABLE"
   | "WITHIN_POLICY"
   // a screening check that does not apply was not run (informational; lib/screening.ts)
   | "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"
