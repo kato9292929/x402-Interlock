@@ -6,6 +6,7 @@
 //                            the rest are left out of every number, not given a label
 //          --items           also list every purchase: task, item, repeat or not, label, answers
 //                            (read only; for reading why a purchase was called not needed)
+//          --labels SOURCE   score only labels from one source: owner (pressed) or rule (from a table)
 //          --source NAME     whose answers to score: live (default: what the gate recorded) or a
 //                            provider replayed with npm run appe-compare (typesafe, clef)
 import { Ledger } from "../lib/ledger";
@@ -29,11 +30,19 @@ if (!sources(everything).includes(source)) {
 // The boundary is chosen over every judge, before picking whose answers to score, so each
 // source is scored on the same purchases.
 const chosen = boundary ? everything.filter((r) => boundaryOf(r) === "boundary") : everything;
-const rows = judgedBy(chosen, source);
+const li = process.argv.indexOf("--labels");
+const labelSource = li > 0 ? process.argv[li + 1] : undefined;
+if (labelSource && !["owner", "rule"].includes(labelSource)) {
+  console.error("Error: --labels owner or --labels rule");
+  process.exit(1);
+}
+// With --labels, labels from the other source are set aside (the purchases stay, unlabelled).
+const rows = judgedBy(chosen, source).map((r) => (labelSource && r.label_source !== labelSource ? { ...r, label: undefined, label_source: undefined } : r));
 const t = loadThresholds();
 const ready = readiness(rows);
 
 console.log(`policy ${t.policy_version}   validated: ${t.validated}   answers scored: ${source === "live" ? "live (as recorded in the gate)" : `${source} replay`}`);
+if (labelSource) console.log(`labels scored: ${labelSource} only${labelSource === "owner" ? " (labels the owner pressed and kept; those that differed from the table were withdrawn, so these agree with it)" : ""}`);
 if (boundary) {
   const c = (k: string) => everything.filter((r) => boundaryOf(r) === k).length;
   console.log(
@@ -71,7 +80,7 @@ const natures = (label: string) => {
 };
 console.log(`  nature                             needed: ${natures("needed")}   unneeded: ${natures("unneeded")}`);
 
-const ruleName = (r: Rule) => `${r.wording === "necessary" ? "necessary         " : "necessary/useful  "} block<${r.block.toFixed(2)} ask<${r.ask.toFixed(2)} dup>=${r.duplicate_ask.toFixed(2)} ${r.nature_blocks ? "unrelated=block" : "nature unused  "}`;
+const ruleName = (r: Rule) => `${r.wording === "necessary" ? "necessary         " : "necessary/useful  "} block<${r.block.toFixed(2)} ask<${r.ask.toFixed(2)} ${Number.isFinite(r.duplicate_ask) ? `dup>=${r.duplicate_ask.toFixed(2)}` : "dup off  "} ${r.nature_blocks ? "unrelated=block" : "nature unused  "}`;
 const current: Rule = { wording: "necessary", block: t.spend_guard.necessity_block, ask: t.spend_guard.necessity_pass, duplicate_ask: t.spend_guard.duplicate_ask, nature_blocks: true };
 
 console.log("\n2. rules compared (labelled needed/unneeded only)");

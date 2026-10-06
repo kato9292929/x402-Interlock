@@ -370,7 +370,10 @@ export function candidateRules(dupAsk: number, boundary?: { low: number; high: n
   for (const wording of ["necessary", "necessary_or_useful"] as const)
     for (const nature_blocks of [true, false])
       for (const block of [0, 0.05, 0.1, 0.2, 0.3, 0.4])
-        for (const ask of [0.5, 0.75]) if (ask > block) out.push({ wording, block, ask, duplicate_ask: dupAsk, nature_blocks });
+        for (const ask of [0.5, 0.75])
+          // Also without the duplicate question: spec/08's criterion is about necessity and nature
+          // alone, and exact repeats are already asked about by the fixed repurchase rule.
+          for (const duplicate_ask of [dupAsk, Infinity]) if (ask > block) out.push({ wording, block, ask, duplicate_ask, nature_blocks });
   return out;
 }
 
