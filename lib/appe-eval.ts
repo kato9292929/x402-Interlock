@@ -62,6 +62,8 @@ export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
   const ruled = new Map<string, PurchaseLabel>();
   for (const e of afterReset(events)) {
     if (e.event_type === "owner_label") labels.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
+    // The owner took back one label (e.g. one given under instructions that did not fit the question).
+    if (e.event_type === "owner_label_withdrawn" && e.data.kind === "purchase") labels.delete(String(e.data.target_decision_id));
     if (e.event_type === "rule_label") ruled.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
   }
   const replays = new Map<string, Record<string, Judged>>();
@@ -274,6 +276,7 @@ export function taskLabels(events: LedgerEvent[]): Map<string, TaskLabel> {
   const ruled = new Map<string, TaskLabel>();
   for (const e of afterReset(events)) {
     if (e.event_type === "owner_task_label") m.set(String(e.data.task_id), e.data.label as TaskLabel);
+    if (e.event_type === "owner_label_withdrawn" && e.data.kind === "task") m.delete(String(e.data.task_id));
     if (e.event_type === "rule_task_label") ruled.set(String(e.data.task_id), e.data.label as TaskLabel);
   }
   for (const [k, v] of ruled) if (!m.has(k)) m.set(k, v); // an owner answer always wins

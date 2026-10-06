@@ -9,6 +9,10 @@
 //                                       (labels by construction, from a table by task and item: recorded as
 //                                        rule_label with the table, never over a label the owner pressed;
 //                                        differences are listed, not changed)
+//      npm run appe-label -- --from-file config/appe-labels.json --withdraw-conflicts --reason "..."
+//                                       (the owner takes back the labels that differ from the table, each
+//                                        recorded as owner_label_withdrawn with the reason; the table's label
+//                                        then applies. Nothing is deleted)
 //      npm run appe-label -- --boundary (only purchases with "necessary or useful" in 0.30-0.85 for any
 //                                        judge; the rest are skipped, not labelled, and left out of
 //                                        npm run appe-metrics -- --boundary. Combines with --review)
@@ -53,6 +57,10 @@ function fromFile(file: string) {
   const plan = planRuleLabels(rows, f, purposeOf);
   const n = (r: ReviewRow) => `#${String(rows.indexOf(r) + 1).padStart(2)}`;
   const dry = process.argv.includes("--dry-run");
+  const withdraw = process.argv.includes("--withdraw-conflicts");
+  const ri = process.argv.indexOf("--reason");
+  const reason = ri > 0 ? (process.argv[ri + 1] ?? "") : "";
+  if (withdraw && !reason.trim()) throw new Error('--withdraw-conflicts needs --reason "why these labels are taken back"');
 
   console.log(`${file} (sha256 ${sha.slice(0, 12)}): ${rows.length} reviewed purchases`);
   console.log(`  to label from the table: ${plan.apply.length}`);
@@ -66,24 +74,41 @@ function fromFile(file: string) {
   const ownerTasks = new Set(all.filter((e) => e.event_type === "owner_task_label").map((e) => String(e.data.task_id)));
   const current = taskLabels(all);
   const tasks = f.task_label ? [...new Set([...plan.apply, ...plan.same.map((row) => ({ row })), ...plan.conflicts].map((x) => x.row.task_id))] : [];
-  const taskApply = tasks.filter((t) => !ownerTasks.has(t) && current.get(t) !== f.task_label);
-  if (f.task_label) console.log(`  tasks to mark ${f.task_label} from the table: ${taskApply.length} (${tasks.length - taskApply.length} already answered)`);
+  const taskConflicts = f.task_label ? tasks.filter((t) => ownerTasks.has(t) && current.get(t) !== f.task_label) : [];
+  const taskApply = tasks.filter((t) => (!ownerTasks.has(t) || (withdraw && taskConflicts.includes(t))) && current.get(t) !== f.task_label);
+  if (f.task_label) {
+    console.log(`  tasks to mark ${f.task_label} from the table: ${taskApply.length} (${tasks.length - taskApply.length} already answered)`);
+    if (taskConflicts.length) console.log(`  task answers by the owner that differ from the table: ${taskConflicts.length}${withdraw ? " (to be withdrawn)" : " (kept)"}`);
+  }
+  if (plan.conflicts.length || taskConflicts.length) {
+    console.log(
+      withdraw
+        ? `\n--withdraw-conflicts: the ${plan.conflicts.length} purchase label(s) and ${taskConflicts.length} task answer(s) above are taken back by the owner ("${reason}") and the table's label applies.`
+        : `\nTo take back the differing labels and use the table's: add --withdraw-conflicts --reason "..." (each one recorded as owner_label_withdrawn).`,
+    );
+  }
 
   if (dry) {
     console.log("\n--dry-run: nothing written.");
     return;
   }
-  if (!plan.apply.length && !taskApply.length) {
+  const conflictsToWithdraw = withdraw ? plan.conflicts : [];
+  if (!plan.apply.length && !taskApply.length && !conflictsToWithdraw.length) {
     console.log("\nnothing to write.");
     return;
   }
   // The table itself goes into the ledger once, so every rule_label can be traced to it.
   ledger.append("appe-labels", "rule_label_set", { file: path.basename(file), sha256: sha, basis: f.basis, table: f.groups, task_label: f.task_label ?? null });
-  for (const a of plan.apply) {
+  // The owner's own decision, made by running this with --withdraw-conflicts and a reason.
+  for (const c of conflictsToWithdraw) {
+    ledger.append(c.row.decision_id, "owner_label_withdrawn", { kind: "purchase", target_decision_id: c.row.decision_id, task_id: c.row.task_id, previous_label: c.owner, reason, rule_set_sha256: sha });
+  }
+  if (withdraw) for (const t of taskConflicts) ledger.append(t, "owner_label_withdrawn", { kind: "task", task_id: t, previous_label: current.get(t), reason, rule_set_sha256: sha });
+  for (const a of [...plan.apply, ...conflictsToWithdraw.map((c) => ({ row: c.row, label: c.table, group: c.group, item: c.item }))]) {
     ledger.append(a.row.decision_id, "rule_label", { target_decision_id: a.row.decision_id, task_id: a.row.task_id, label: a.label, group: a.group, item: a.item, rule_set_sha256: sha });
   }
   for (const t of taskApply) ledger.append(t, "rule_task_label", { task_id: t, label: f.task_label, rule_set_sha256: sha });
-  console.log(`\nwritten: ${plan.apply.length} rule_label, ${taskApply.length} rule_task_label (table ${sha.slice(0, 12)} recorded as rule_label_set).`);
+  console.log(`\nwritten: ${conflictsToWithdraw.length + (withdraw ? taskConflicts.length : 0)} owner_label_withdrawn, ${plan.apply.length + conflictsToWithdraw.length} rule_label, ${taskApply.length} rule_task_label (table ${sha.slice(0, 12)} recorded as rule_label_set).`);
   console.log("Next: npm run appe-metrics -- --items");
 }
 
