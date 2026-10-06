@@ -45,6 +45,10 @@ if (boundary) {
 const notAnswered = rows.filter((r) => r.jev_status !== "OK").length;
 if (notAnswered) console.log(`  ${notAnswered} of them without an answer from ${source} (left out of the rules below)`);
 console.log(`reviews ${rows.length}: needed ${ready.needed}, unneeded ${ready.unneeded}, not sure ${ready.unsure}, unlabelled ${ready.unlabelled}`);
+{
+  const bySource = (src: string) => rows.filter((r) => r.label && r.label_source === src).length;
+  console.log(`labels: ${bySource("owner")} pressed by the owner, ${bySource("rule")} from a table by construction (rule_label; marked * in --items)`);
+}
 if (!ready.ready) console.log("NOT ENOUGH for the section 4 decision yet: at least 30 labelled needed + unneeded, with both present.");
 
 console.log("\n1. probability ranges by the owner's label (n min / median / max)");
@@ -125,7 +129,7 @@ console.log(`  spend the owner called unneeded: ${unneededSpend.toFixed(2)} USDC
 
 if (process.argv.includes("--items")) {
   console.log("\n5. every purchase (# = order in the ledger; repeat = same URL earlier in the same task)");
-  console.log("     #  task                          item                         repeat  label     necessary  or useful  duplicate  nature        boundary");
+  console.log("     #  task                          item                         repeat  label      necessary  or useful  duplicate  nature        boundary");
   const seen = new Set<string>();
   for (const r of rows) {
     const key = `${r.task_id}|${r.url}`;
@@ -135,7 +139,7 @@ if (process.argv.includes("--items")) {
     const purpose = getTask(r.task_id)?.purpose ?? r.task_id;
     const f = (v: number | null) => (v === null ? "  -  " : v.toFixed(2)).padStart(9);
     console.log(
-      `  ${String(everything.findIndex((x) => x.decision_id === r.decision_id) + 1).padStart(4)}  ${purpose.replace(/\s+/g, " ").slice(0, 28).padEnd(28)}  ${item.slice(0, 28).padEnd(28)} ${(repeat ? "yes" : "").padEnd(6)}  ${(r.label ?? "-").padEnd(8)} ${f(r.necessity)}  ${f(r.necessity_alt)}  ${f(r.duplicate)}  ${(r.nature ?? r.jev_status).padEnd(12)}  ${boundaryOf(everything.find((x) => x.decision_id === r.decision_id)!)}`,
+      `  ${String(everything.findIndex((x) => x.decision_id === r.decision_id) + 1).padStart(4)}  ${purpose.replace(/\s+/g, " ").slice(0, 28).padEnd(28)}  ${item.slice(0, 28).padEnd(28)} ${(repeat ? "yes" : "").padEnd(6)}  ${((r.label ?? "-") + (r.label_source === "rule" ? "*" : "")).padEnd(9)} ${f(r.necessity)}  ${f(r.necessity_alt)}  ${f(r.duplicate)}  ${(r.nature ?? r.jev_status).padEnd(12)}  ${boundaryOf(everything.find((x) => x.decision_id === r.decision_id)!)}`,
     );
   }
 }

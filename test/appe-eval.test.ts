@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { LedgerEvent } from "../lib/ledger";
-import { boundaryOf, candidateRules, decide, judgedBy, readiness, reviewRows, scoreRule, sources, taskLabels, type Rule } from "../lib/appe-eval";
+import { boundaryOf, candidateRules, checkRuleFile, planRuleLabels, decide, judgedBy, readiness, reviewRows, scoreRule, sources, taskLabels, type Rule } from "../lib/appe-eval";
 
 let n = 0;
 const ev = (decision_id: string, event_type: string, data: Record<string, unknown>): LedgerEvent =>
@@ -96,4 +96,45 @@ test("boundary rules: only \"necessary or useful\", thresholds inside the range"
   const rules = candidateRules(0.5, { low: 0.3, high: 0.85 });
   assert.ok(rules.length > 0);
   assert.ok(rules.every((r) => r.wording === "necessary_or_useful" && r.ask >= 0.3 && r.ask <= 0.85 && (r.block === 0 || (r.block >= 0.3 && r.block <= 0.85))));
+});
+
+test("labels by construction: applied where nobody pressed; an owner label is never overwritten, a difference is listed", () => {
+  const url = (item: string) => `http://h/api/seller/sol-catalog/${item}`;
+  const r = (id: string, task: string, item: string) => ev(id, "spend_guard_review", { mode: "shadow", task_id: task, url: url(item), amount: "1", jev_status: "OK", necessity_alt_prob: 0.5, would_have: "none" });
+  const table = {
+    basis: "by construction",
+    groups: {
+      video: { purpose_contains: ["music video"], needed: ["clip-city-night"], unneeded: ["weather-tokyo"], unsure: ["font-license"] },
+      report: { purpose_contains: ["streaming report"], unneeded: ["clip-city-night"] },
+    },
+    task_label: "achieved" as const,
+  };
+  assert.deepEqual(checkRuleFile(table), []);
+  assert.match(checkRuleFile({ ...table, basis: " ", groups: { x: { purpose_contains: ["a"], needed: ["i"], unneeded: ["i"] } } }).join(" "), /basis.*i is both needed and unneeded/);
+  const evs = [
+    r("v1", "tv", "clip-city-night"),
+    r("v2", "tv", "clip-city-night"), // repeat: the item's label
+    r("v3", "tv", "weather-tokyo"),
+    r("v4", "tv", "render-minutes"), // not in the table
+    r("r1", "tr", "clip-city-night"), // same item, other task: other label
+    r("x1", "tx", "eth-spot"), // task in no group
+    label("v2", "unneeded"), // the owner pressed it the old way
+    label("v3", "unneeded"), // the owner agrees with the table
+  ];
+  const purposes: Record<string, string> = { tv: "Make a 30-second Music Video", tr: "Weekly streaming report", tx: "ETH price" };
+  const plan = planRuleLabels(reviewRows(evs), table, (id) => purposes[id]);
+  assert.deepEqual(plan.apply.map((a) => [a.row.decision_id, a.label]), [["v1", "needed"], ["r1", "unneeded"]]);
+  assert.deepEqual(plan.same.map((x) => x.decision_id), ["v3"]);
+  assert.deepEqual(plan.conflicts.map((c) => [c.row.decision_id, c.owner, c.table]), [["v2", "unneeded", "needed"]]);
+  assert.deepEqual(plan.unmatched.map((u) => u.row.decision_id), ["v4", "x1"]);
+
+  // Written as rule_label: counted like a label, marked as by rule; an owner label still wins, whatever the order.
+  const written = [...evs, ...plan.apply.map((a) => ev(a.row.decision_id, "rule_label", { target_decision_id: a.row.decision_id, task_id: a.row.task_id, label: a.label })), ev("v2", "rule_label", { target_decision_id: "v2", label: "needed" }), ev("tv", "rule_task_label", { task_id: "tv", label: "achieved" }), ev("tr", "owner_task_label", { task_id: "tr", label: "not_achieved" }), ev("tr", "rule_task_label", { task_id: "tr", label: "achieved" })];
+  const rows = reviewRows(written);
+  const by = (id: string) => rows.find((x) => x.decision_id === id)!;
+  assert.deepEqual([by("v1").label, by("v1").label_source], ["needed", "rule"]);
+  assert.deepEqual([by("v2").label, by("v2").label_source], ["unneeded", "owner"]);
+  assert.equal(by("v4").label, undefined);
+  assert.equal(taskLabels(written).get("tv"), "achieved");
+  assert.equal(taskLabels(written).get("tr"), "not_achieved");
 });

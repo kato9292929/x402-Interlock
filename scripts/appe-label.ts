@@ -5,12 +5,19 @@
 // Run: npm run appe-label              (with npm run appe-eval-run finished; labels are ledger events)
 //      npm run appe-label -- --review  (go through all of them again, Enter keeps a label, 1/2/3 changes it)
 //      npm run appe-label -- --reset   (withdraw every label so far; recorded in the ledger with the reason)
+//      npm run appe-label -- --from-file config/appe-labels.json [--dry-run]
+//                                       (labels by construction, from a table by task and item: recorded as
+//                                        rule_label with the table, never over a label the owner pressed;
+//                                        differences are listed, not changed)
 //      npm run appe-label -- --boundary (only purchases with "necessary or useful" in 0.30-0.85 for any
 //                                        judge; the rest are skipped, not labelled, and left out of
 //                                        npm run appe-metrics -- --boundary. Combines with --review)
 import { emitKeypressEvents } from "node:readline";
 import { Ledger } from "../lib/ledger";
-import { BOUNDARY, boundaryOf, reviewRows, sellerDescription, taskLabels, type PurchaseLabel, type ReviewRow, type TaskLabel } from "../lib/appe-eval";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { BOUNDARY, boundaryOf, checkRuleFile, planRuleLabels, reviewRows, sellerDescription, taskLabels, type PurchaseLabel, type ReviewRow, type RuleLabelFile, type TaskLabel } from "../lib/appe-eval";
 import { getTask } from "../lib/tasks";
 
 const KEYS: Record<string, PurchaseLabel> = { "1": "needed", "2": "unneeded", "3": "unsure", y: "needed", n: "unneeded", s: "unsure" };
@@ -32,7 +39,61 @@ function key(allowed: string[]): Promise<string> {
   });
 }
 
+/** Labels by construction from a table (spec/08): one rule_label per purchase, with the table. */
+function fromFile(file: string) {
+  const raw = readFileSync(file, "utf8");
+  const f = JSON.parse(raw) as RuleLabelFile;
+  const problems = checkRuleFile(f);
+  if (problems.length) throw new Error(`${file}:\n  ${problems.join("\n  ")}`);
+  const sha = createHash("sha256").update(raw).digest("hex");
+  const ledger = new Ledger();
+  const all = ledger.readAll();
+  const rows = reviewRows(all);
+  const purposeOf = (id: string) => getTask(id)?.purpose;
+  const plan = planRuleLabels(rows, f, purposeOf);
+  const n = (r: ReviewRow) => `#${String(rows.indexOf(r) + 1).padStart(2)}`;
+  const dry = process.argv.includes("--dry-run");
+
+  console.log(`${file} (sha256 ${sha.slice(0, 12)}): ${rows.length} reviewed purchases`);
+  console.log(`  to label from the table: ${plan.apply.length}`);
+  console.log(`  already the same label:  ${plan.same.length}`);
+  console.log(`  owner pressed a different label (kept, not changed): ${plan.conflicts.length}`);
+  for (const c of plan.conflicts) console.log(`    ${n(c.row)} ${c.group.padEnd(9)} ${c.item.padEnd(28)} owner ${c.owner.padEnd(8)} table ${c.table}`);
+  console.log(`  not in the table (left unlabelled): ${plan.unmatched.length}`);
+  for (const u of plan.unmatched) console.log(`    ${n(u.row)} ${u.why}`);
+
+  // Task answers: only where the owner has not answered.
+  const ownerTasks = new Set(all.filter((e) => e.event_type === "owner_task_label").map((e) => String(e.data.task_id)));
+  const current = taskLabels(all);
+  const tasks = f.task_label ? [...new Set([...plan.apply, ...plan.same.map((row) => ({ row })), ...plan.conflicts].map((x) => x.row.task_id))] : [];
+  const taskApply = tasks.filter((t) => !ownerTasks.has(t) && current.get(t) !== f.task_label);
+  if (f.task_label) console.log(`  tasks to mark ${f.task_label} from the table: ${taskApply.length} (${tasks.length - taskApply.length} already answered)`);
+
+  if (dry) {
+    console.log("\n--dry-run: nothing written.");
+    return;
+  }
+  if (!plan.apply.length && !taskApply.length) {
+    console.log("\nnothing to write.");
+    return;
+  }
+  // The table itself goes into the ledger once, so every rule_label can be traced to it.
+  ledger.append("appe-labels", "rule_label_set", { file: path.basename(file), sha256: sha, basis: f.basis, table: f.groups, task_label: f.task_label ?? null });
+  for (const a of plan.apply) {
+    ledger.append(a.row.decision_id, "rule_label", { target_decision_id: a.row.decision_id, task_id: a.row.task_id, label: a.label, group: a.group, item: a.item, rule_set_sha256: sha });
+  }
+  for (const t of taskApply) ledger.append(t, "rule_task_label", { task_id: t, label: f.task_label, rule_set_sha256: sha });
+  console.log(`\nwritten: ${plan.apply.length} rule_label, ${taskApply.length} rule_task_label (table ${sha.slice(0, 12)} recorded as rule_label_set).`);
+  console.log("Next: npm run appe-metrics -- --items");
+}
+
 async function main() {
+  const fi = process.argv.indexOf("--from-file");
+  if (fi > 0) {
+    if (!process.argv[fi + 1]) throw new Error("usage: npm run appe-label -- --from-file config/appe-labels.json [--dry-run]");
+    fromFile(process.argv[fi + 1]);
+    return;
+  }
   if (process.argv.includes("--reset")) {
     const i = process.argv.indexOf("--reason");
     const reason = i > 0 ? process.argv[i + 1] : "withdrawn by the owner";
