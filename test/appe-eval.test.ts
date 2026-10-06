@@ -138,3 +138,15 @@ test("labels by construction: applied where nobody pressed; an owner label is ne
   assert.equal(taskLabels(written).get("tv"), "achieved");
   assert.equal(taskLabels(written).get("tr"), "not_achieved");
 });
+
+test("an owner label taken back (owner_label_withdrawn) gives way to the table; a later press wins again", () => {
+  const base = [review("a", 0.2, 0.8, 0.9, "direct"), label("a", "unneeded"), ev("a", "rule_label", { target_decision_id: "a", label: "needed" })];
+  assert.deepEqual([reviewRows(base)[0].label, reviewRows(base)[0].label_source], ["unneeded", "owner"]);
+  const withdrawn = [...base, ev("a", "owner_label_withdrawn", { kind: "purchase", target_decision_id: "a", previous_label: "unneeded", reason: "repeats are for duplicate" })];
+  assert.deepEqual([reviewRows(withdrawn)[0].label, reviewRows(withdrawn)[0].label_source], ["needed", "rule"]);
+  const pressedAgain = [...withdrawn, label("a", "unsure")];
+  assert.deepEqual([reviewRows(pressedAgain)[0].label, reviewRows(pressedAgain)[0].label_source], ["unsure", "owner"]);
+  const tasks = [ev("t1", "owner_task_label", { task_id: "t1", label: "not_achieved" }), ev("t1", "rule_task_label", { task_id: "t1", label: "achieved" })];
+  assert.equal(taskLabels(tasks).get("t1"), "not_achieved");
+  assert.equal(taskLabels([...tasks, ev("t1", "owner_label_withdrawn", { kind: "task", task_id: "t1", reason: "x" })]).get("t1"), "achieved");
+});
