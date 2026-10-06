@@ -4,11 +4,14 @@
 // config/appe-thresholds.json. Run: npm run appe-metrics
 // Options: --boundary        only the boundary purchases (as npm run appe-label -- --boundary);
 //                            the rest are left out of every number, not given a label
+//          --items           also list every purchase: task, item, repeat or not, label, answers
+//                            (read only; for reading why a purchase was called not needed)
 //          --source NAME     whose answers to score: live (default: what the gate recorded) or a
 //                            provider replayed with npm run appe-compare (typesafe, clef)
 import { Ledger } from "../lib/ledger";
 import { BOUNDARY, boundaryOf, candidateRules, judgedBy, quantiles, readiness, reviewRows, scoreRule, sources, taskLabels, type ReviewRow, type Rule } from "../lib/appe-eval";
 import { loadThresholds } from "../lib/appe";
+import { getTask } from "../lib/tasks";
 
 const JEV_USD_PER_CALL = 0.00003; // the brief's figure (spec/07 section 4), not measured here
 const pct = (v: number | null) => (v === null ? "  -  " : `${(v * 100).toFixed(0).padStart(3)}%`);
@@ -119,3 +122,20 @@ console.log(hosted ? `  Jev calls ~${calls} x $${JEV_USD_PER_CALL} = $${(calls *
 console.log(`  latency ms: ${lat ? `min ${lat.min} / median ${lat.median} / max ${lat.max}` : "-"} (in parallel with Intercepta)`);
 const unneededSpend = rows.filter((r) => r.label === "unneeded").reduce((s, r) => s + Number(r.amount) / 1e6, 0);
 console.log(`  spend the owner called unneeded: ${unneededSpend.toFixed(2)} USDC; owner checks added: see "asks" per rule`);
+
+if (process.argv.includes("--items")) {
+  console.log("\n5. every purchase (# = order in the ledger; repeat = same URL earlier in the same task)");
+  console.log("     #  task                          item                         repeat  label     necessary  or useful  duplicate  nature        boundary");
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const key = `${r.task_id}|${r.url}`;
+    const repeat = seen.has(key);
+    seen.add(key);
+    const item = new URL(r.url).pathname.replace(/^\/api\/seller\/(sol-catalog\/)?/, "");
+    const purpose = getTask(r.task_id)?.purpose ?? r.task_id;
+    const f = (v: number | null) => (v === null ? "  -  " : v.toFixed(2)).padStart(9);
+    console.log(
+      `  ${String(everything.findIndex((x) => x.decision_id === r.decision_id) + 1).padStart(4)}  ${purpose.replace(/\s+/g, " ").slice(0, 28).padEnd(28)}  ${item.slice(0, 28).padEnd(28)} ${(repeat ? "yes" : "").padEnd(6)}  ${(r.label ?? "-").padEnd(8)} ${f(r.necessity)}  ${f(r.necessity_alt)}  ${f(r.duplicate)}  ${(r.nature ?? r.jev_status).padEnd(12)}  ${boundaryOf(everything.find((x) => x.decision_id === r.decision_id)!)}`,
+    );
+  }
+}
