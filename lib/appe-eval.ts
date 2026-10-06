@@ -41,6 +41,9 @@ export interface ReviewRow {
   latency_ms: number;
   cached: boolean;
   label?: PurchaseLabel;
+  /** "owner": pressed one by one (owner_label). "rule": applied from a table where the answer
+   * follows from how the purchase was built (rule_label, spec/08). An owner label always wins. */
+  label_source?: "owner" | "rule";
 }
 
 /** Labels count only after the latest owner_label_reset: the ledger is append-only, so a set of
@@ -56,7 +59,11 @@ function afterReset(events: LedgerEvent[]): LedgerEvent[] {
 /** Every Spend Guard shadow review, oldest first, with the owner's label if there is one. */
 export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
   const labels = new Map<string, PurchaseLabel>();
-  for (const e of afterReset(events)) if (e.event_type === "owner_label") labels.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
+  const ruled = new Map<string, PurchaseLabel>();
+  for (const e of afterReset(events)) {
+    if (e.event_type === "owner_label") labels.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
+    if (e.event_type === "rule_label") ruled.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
+  }
   const replays = new Map<string, Record<string, Judged>>();
   for (const e of events) {
     if (e.event_type !== "spend_guard_replay") continue;
@@ -94,7 +101,8 @@ export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
         would_have: String(d.would_have),
         latency_ms: Number(d.latency_ms ?? 0),
         cached: d.cached === true,
-        label: labels.get(e.decision_id),
+        label: labels.get(e.decision_id) ?? ruled.get(e.decision_id),
+        label_source: labels.has(e.decision_id) ? ("owner" as const) : ruled.has(e.decision_id) ? ("rule" as const) : undefined,
       };
     });
 }
@@ -189,9 +197,86 @@ export function replayInput(
   };
 }
 
+// ---------------------------------------------------------------------------
+// labels by construction (spec/08: "a label whose answer follows from how the case was built")
+// ---------------------------------------------------------------------------
+
+/**
+ * A table of labels by task group and item. A purchase's group is found from its task's purpose
+ * (case-insensitive substring); its item is the seller path (`clip-city-night`, `sol-stats`).
+ * Repeats get the same label as the first purchase: the label is about the item, and repeats
+ * are the duplicate question's business.
+ */
+export interface RuleLabelFile {
+  /** why these labels follow from how the purchases were built; recorded in the ledger */
+  basis: string;
+  groups: Record<string, { purpose_contains: string[]; needed?: string[]; unneeded?: string[]; unsure?: string[] }>;
+  /** the answer for every task's "purpose met?" question, if the table gives one */
+  task_label?: TaskLabel;
+}
+
+/** The seller item of a purchase URL: the path after /api/seller/ (and sol-catalog/). */
+export const itemOf = (url: string) => new URL(url).pathname.replace(/^\/api\/seller\/(sol-catalog\/)?/, "");
+
+export function checkRuleFile(f: RuleLabelFile): string[] {
+  const problems: string[] = [];
+  if (!f.basis?.trim()) problems.push("basis is empty: say why these labels follow from how the purchases were built");
+  if (!f.groups || !Object.keys(f.groups).length) problems.push("no groups");
+  for (const [name, g] of Object.entries(f.groups ?? {})) {
+    if (!g.purpose_contains?.length) problems.push(`${name}: purpose_contains is empty`);
+    const seen = new Map<string, string>();
+    for (const label of ["needed", "unneeded", "unsure"] as const)
+      for (const item of g[label] ?? []) {
+        if (seen.has(item)) problems.push(`${name}: ${item} is both ${seen.get(item)} and ${label}`);
+        seen.set(item, label);
+      }
+  }
+  if (f.task_label && !["achieved", "not_achieved", "unsure"].includes(f.task_label)) problems.push(`task_label ${f.task_label} is not achieved, not_achieved or unsure`);
+  return problems;
+}
+
+export interface RulePlan {
+  /** to append as rule_label */
+  apply: { row: ReviewRow; label: PurchaseLabel; group: string; item: string }[];
+  /** already labelled the same way (by the owner or by an earlier run of the table) */
+  same: ReviewRow[];
+  /** the owner pressed a different label: kept, listed for the owner to look at */
+  conflicts: { row: ReviewRow; owner: PurchaseLabel; table: PurchaseLabel; group: string; item: string }[];
+  /** no group for the task, more than one group, or the item is not in the group's lists */
+  unmatched: { row: ReviewRow; why: string }[];
+}
+
+export function planRuleLabels(rows: ReviewRow[], f: RuleLabelFile, purposeOf: (task_id: string) => string | undefined): RulePlan {
+  const plan: RulePlan = { apply: [], same: [], conflicts: [], unmatched: [] };
+  for (const row of rows) {
+    const purpose = (purposeOf(row.task_id) ?? "").toLowerCase();
+    const groups = Object.entries(f.groups).filter(([, g]) => g.purpose_contains.some((p) => purpose.includes(p.toLowerCase())));
+    if (groups.length !== 1) {
+      plan.unmatched.push({ row, why: groups.length ? `task matches ${groups.map(([n]) => n).join(" and ")}` : "task matches no group" });
+      continue;
+    }
+    const [group, g] = groups[0];
+    const item = itemOf(row.url);
+    const label = (["needed", "unneeded", "unsure"] as const).find((l) => (g[l] ?? []).includes(item));
+    if (!label) {
+      plan.unmatched.push({ row, why: `${item} is not listed for ${group}` });
+      continue;
+    }
+    if (row.label === label) plan.same.push(row);
+    else if (row.label_source === "owner") plan.conflicts.push({ row, owner: row.label!, table: label, group, item });
+    else plan.apply.push({ row, label, group, item });
+  }
+  return plan;
+}
+
 export function taskLabels(events: LedgerEvent[]): Map<string, TaskLabel> {
   const m = new Map<string, TaskLabel>();
-  for (const e of afterReset(events)) if (e.event_type === "owner_task_label") m.set(String(e.data.task_id), e.data.label as TaskLabel);
+  const ruled = new Map<string, TaskLabel>();
+  for (const e of afterReset(events)) {
+    if (e.event_type === "owner_task_label") m.set(String(e.data.task_id), e.data.label as TaskLabel);
+    if (e.event_type === "rule_task_label") ruled.set(String(e.data.task_id), e.data.label as TaskLabel);
+  }
+  for (const [k, v] of ruled) if (!m.has(k)) m.set(k, v); // an owner answer always wins
   return m;
 }
 

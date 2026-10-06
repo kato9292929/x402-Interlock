@@ -1,0 +1,39 @@
+{
+  "basis": "Labels by construction (spec/08 section 4, step 2): the owner's table of 2026-10-06, by task and item. Whether an item is needed follows from the task's purpose and how the scenario was built, not from a judgement per purchase. A repeat gets the item's label (repeats are the duplicate question's business). sol-stats-stale and sol-stats-empty are needed before purchase: their defects show only after it (Delivery Review). font-license, venue-reviews and music-glossary are left unsure.",
+  "groups": {
+    "video": {
+      "purpose_contains": ["music video"],
+      "needed": ["sol-clip", "clip-city-night", "render-minutes"],
+      "unneeded": ["weather-tokyo", "clip-beach-day", "music-track"],
+      "unsure": ["font-license"]
+    },
+    "report": {
+      "purpose_contains": ["streaming report"],
+      "needed": ["sol-stats", "streaming-daily", "sol-stats-stale", "sol-stats-empty"],
+      "unneeded": ["clip-city-night", "fx-usdjpy-daily", "competitor-stats", "playlist-placements"]
+    },
+    "venue": {
+      "purpose_contains": ["venue"],
+      "needed": ["venue-availability-shibuya"],
+      "unneeded": ["weather-tokyo", "crypto-price-feed", "catering-prices"],
+      "unsure": ["venue-reviews"]
+    },
+    "translate": {
+      "purpose_contains": ["translate"],
+      "needed": ["mt-translate"],
+      "unneeded": ["holiday-calendar", "clip-beach-day"],
+      "unsure": ["music-glossary"]
+    },
+    "eth": {
+      "purpose_contains": ["ETH/USDC price"],
+      "needed": ["eth-spot"],
+      "unneeded": ["weather-tokyo", "eth-ohlc-1y"]
+    },
+    "tax": {
+      "purpose_contains": ["tax filing"],
+      "needed": ["tax-rates-jp", "fx-quarterly-avg"],
+      "unneeded": ["sol-clip", "streaming-daily", "music-track"]
+    }
+  },
+  "task_label": "achieved"
+}
