@@ -15,6 +15,10 @@ export type ReasonCode =
   | "RUN_LIMIT_EXCEEDED"
   | "ABOVE_HUMAN_THRESHOLD"
   | "REPURCHASE_IN_WINDOW"
+  // the same purchase in the same task is still being paid, or its outcome is unknown (lib/gate.ts)
+  | "PURCHASE_IN_FLIGHT"
+  | "PREVIOUS_PAYMENT_UNCONFIRMED"
+  | "PURCHASED_SINCE_DECISION"
   | "WITHIN_POLICY"
   // a screening check that does not apply was not run (informational; lib/screening.ts)
   | "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"

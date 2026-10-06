@@ -11,9 +11,13 @@
 //   npm run task -- new-token OWNER_TOKEN   # random token into .env.local; never overwrites, never equal to AGENT_TOKEN
 //   npm run task -- protect add address home      # register the owner's data (prompts for the value; server-side only)
 //   npm run task -- protect list | protect remove home
+//   npm run task -- release <decision_id> --reason "pull not on chain, seller not paid"
+//                                           # owner: free a purchase whose payment outcome was unknown
+//                                           # (unconfirmed pull / no answer from the seller), after checking the chain
 //   npm run task -- seller-account          # create the seller's USDC token account, paid by the owner (direct)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { releaseReservation } from "../lib/gate";
 import { SolanaAllowanceChain, SolanaSetupError } from "../lib/solana/allowance";
 import { formatSolanaError } from "../lib/solana/errors";
 import { addProtected, maskedProtected, removeProtected } from "../lib/protect";
@@ -83,13 +87,24 @@ async function main() {
     await setEnv(process.argv[3]);
   } else if (cmd === "new-token") {
     newToken(process.argv[3]);
+  } else if (cmd === "release") {
+    // Direct, like protect: the owner runs this on the gate's machine; it appends to the ledger.
+    const id = process.argv[3];
+    if (!id) throw new Error('usage: npm run task -- release <decision_id> --reason "what you checked on chain"');
+    let held;
+    try {
+      held = releaseReservation(id, arg("--reason") ?? "");
+    } catch (e) {
+      throw new SolanaSetupError((e as Error).message); // a ledger answer, not a chain error
+    }
+    console.log(`released ${id} (was ${held.reason}). The same purchase can be decided again; the release and its reason are in the ledger.`);
   } else if (cmd === "seller-account") {
     const r = await new SolanaAllowanceChain().createSellerTokenAccount();
     console.log(JSON.stringify(r, null, 2));
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|set-env|protect|seller-account");
+    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|set-env|protect|release|seller-account");
   }
 }
 

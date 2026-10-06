@@ -289,7 +289,11 @@ purchases). It decides nothing; the owner chooses and records the reason in
 `config/appe-thresholds.json`. A set of labels the owner withdraws is closed off with
 `npm run appe-label -- --reset --reason "..."` (an `owner_label_reset` event; earlier labels stay in
 the ledger but no longer count). The first labelling pass (2026-10-05) was keyed at random and has
-been withdrawn this way; **stage 4 has no valid labels yet**.
+been withdrawn this way. The second pass (boundary only, 22 labels) showed no separation; why, and
+what to check next, is in [`spec/08`](spec/08-stage4-review-and-validation-order.md): the boundary
+left out the off-topic purchases where Jev had separated clearly, repeats were labelled "not
+needed" and scored with the necessity question, and 22 labels cannot show a moderate signal.
+**Stage 4 is not decided; stage 5 stays blocked.**
 
 **Boundary-only labelling** (2026-10-05). `npm run appe-label -- --boundary` asks only about
 purchases whose "necessary or useful" probability is between 0.30 and 0.85 for any judge; the
@@ -314,16 +318,21 @@ with replays present it also lists every judge's ranges on the same purchases. T
 between them is made on the owner's labels, not on benchmarks. **Clef has not been run here**:
 no Clef server was available, so only a local stand-in with the same contract was used.
 
-**Known gap, seen live (2026-10-05): a retried purchase while the first is still in flight is paid
-twice.** During the stage 4 run, two payment requests hung for over 5 minutes (the Allowance pull
-waiting for a WebSocket confirmation) and the run script retried them. Both first requests later
-completed, so `weather-tokyo` (venue task) and `crypto-news` (eth task) were each paid twice
-(0.02 USDC each; task usage 0.16 and 0.10 instead of 0.14 and 0.08). Nothing in the gate stopped
-the second request: the repurchase rule and Spend Guard's history only see completed payments.
-Fixed so far: the script never retries a payment request, and every Solana send is bounded (60 s,
-then recorded as unconfirmed). Not fixed yet: the gate itself treating an in-flight purchase of the
-same target as a duplicate; that is spec/07 section 8 (reserve, confirm, release; no double
-purchase on retry).
+**Double payment on retry, seen live (2026-10-05), fixed.** During the stage 4 run, two payment
+requests hung for over 5 minutes (the Allowance pull waiting for a WebSocket confirmation) and the
+run script retried them. Both first requests later completed, so `weather-tokyo` (venue task) and
+`crypto-news` (eth task) were each paid twice (0.02 USDC each; task usage 0.16 and 0.10 instead
+of 0.14 and 0.08). The repurchase rule only saw completed payments. Now (spec/07 section 8, the
+same-purchase part): a payment is reserved in the ledger (`payment_reserved`) before any money
+moves, with no await between the check and the reservation. A second purchase of the same resource
+in the same task is refused while the first is running (`PURCHASE_IN_FLIGHT`), or at the
+reservation if the first completed after the second's decision began (`PURCHASED_SINCE_DECISION`).
+A payment whose outcome is unknown (pull unconfirmed, or no answer from the seller after signing)
+stays reserved (`PREVIOUS_PAYMENT_UNCONFIRMED`) until the owner checks the chain and runs
+`npm run task -- release <decision_id> --reason "..."`. Also: every Solana send is bounded (60 s)
+and the run script never retries a payment. Not covered: several server processes sharing one
+ledger file, and reconciling a pull that did land without the seller being paid (the amount stays
+in the gate's account).
 
 `npm run jev-probe` makes one live call with a synthetic state and checks the response shape
 (`npm run jev-probe -- --provider clef` for a Clef server: it prints the model string it returns).
