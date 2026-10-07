@@ -22,6 +22,7 @@
     "appe-label": "tsx --env-file-if-exists=.env.local scripts/appe-label.ts",
     "appe-metrics": "tsx --env-file-if-exists=.env.local scripts/appe-metrics.ts",
     "spend-guard-confirm-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-confirm-run.ts",
+    "appe-keyword-baseline": "tsx --env-file-if-exists=.env.local scripts/appe-keyword-baseline.ts",
     "appe-compare": "tsx --env-file-if-exists=.env.local scripts/appe-compare.ts"
   },
   "dependencies": {
