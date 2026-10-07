@@ -2,6 +2,7 @@
   "_comment": [
     "Agent Procurement Policy Engine thresholds (spec/07). Read by lib/appe.ts; nothing is hard-coded.",
     "VALIDATED 2026-10-06 for confirm mode only (spec/07 section 4, spec/08): see validation below. Spend Guard asks the owner; it never blocks on its own. The block threshold is recorded as the line for a future automatic block, which is not enabled.",
+    "OFF since 2026-10-07 (owner's decision, spec/08 section 10): the gate's core is the deterministic checks; Spend Guard stays as a removable part and sends nothing out while off. The validation below still stands for the day it is turned back on (confirm only).",
     "History: the brief's provisional values (necessary < 0.40 block, < 0.75 ask, duplicate >= 0.50 ask) were replaced by the values validated below. Changing any number here changes policy_version; a change of rule needs a new check.",
     "Jev probabilities are the model's answer distribution, not the probability that a payment is safe (principle 3).",
     "jev.model / jev.expected_model: pinned 2026-10-03 after the first live call (npm run jev-probe on the owner's Mac: HTTP 200, all three answer shapes as the SDK documents, model returned jev-1.13.0). The key's model list shows only jev-latest and jev-preview, so whether jev-1.13.0 is accepted as a request name is checked by the next probe. Either way, an answer from any model other than expected_model is UNAVAILABLE, so a silent version change cannot enter the record.",
@@ -35,7 +36,7 @@
     }
   },
   "spend_guard": {
-    "mode": "confirm",
+    "mode": "off",
     "history_limit": 20,
     "description_max_chars": 2000,
     "necessity_pass": 0.5,

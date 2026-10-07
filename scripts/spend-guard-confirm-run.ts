@@ -1,4 +1,6 @@
 // Stage 5 on devnet (spec/08): Spend Guard in confirm mode asks the owner; it never blocks.
+// Since 2026-10-07 the shipped config has Spend Guard off: set spend_guard.mode to "confirm" in
+// config/appe-thresholds.json before running this, or nothing is asked.
 //   task "Make a 30-second music video ..." 0.40 USDC:
 //     1. clip-city-night  needed      -> expected: paid, nobody asked
 //     2. weather-tokyo    off-topic   -> expected: AWAITING_HUMAN with a SPEND_GUARD_ reason, not paid
@@ -112,7 +114,7 @@ async function main() {
   } catch (e) {
     throw explainFetchError(e, server);
   } finally {
-    server.stop();
+    await server.stop();
   }
 }
 
