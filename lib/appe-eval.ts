@@ -43,7 +43,9 @@ export interface ReviewRow {
   label?: PurchaseLabel;
   /** "owner": pressed one by one (owner_label). "rule": applied from a table where the answer
    * follows from how the purchase was built (rule_label, spec/08). An owner label always wins. */
-  label_source?: "owner" | "rule";
+  label_source?: "owner" | "decision" | "rule";
+  /** decision labels: the payment was asked about for other reasons too (a rejection may be about them) */
+  label_other_reasons?: string[];
 }
 
 /** Labels count only after the latest owner_label_reset: the ledger is append-only, so a set of
@@ -60,7 +62,10 @@ function afterReset(events: LedgerEvent[]): LedgerEvent[] {
 export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
   const labels = new Map<string, PurchaseLabel>();
   const ruled = new Map<string, PurchaseLabel>();
+  const decided = new Map<string, { label: PurchaseLabel; other: string[] }>();
   for (const e of afterReset(events)) {
+    // The owner's approval or rejection of a payment Spend Guard reviewed (stage 5, confirm mode).
+    if (e.event_type === "owner_decision_label") decided.set(String(e.data.target_decision_id), { label: e.data.label as PurchaseLabel, other: (e.data.other_reasons as string[]) ?? [] });
     if (e.event_type === "owner_label") labels.set(String(e.data.target_decision_id), e.data.label as PurchaseLabel);
     // The owner took back one label (e.g. one given under instructions that did not fit the question).
     if (e.event_type === "owner_label_withdrawn" && e.data.kind === "purchase") labels.delete(String(e.data.target_decision_id));
@@ -83,7 +88,7 @@ export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
     replays.set(String(d.target_decision_id), m);
   }
   return events
-    .filter((e) => e.event_type === "spend_guard_review" && e.data.mode === "shadow")
+    .filter((e) => e.event_type === "spend_guard_review" && (e.data.mode === "shadow" || e.data.mode === "confirm"))
     .map((e) => {
       const d = e.data;
       return {
@@ -103,8 +108,10 @@ export function reviewRows(events: LedgerEvent[]): ReviewRow[] {
         would_have: String(d.would_have),
         latency_ms: Number(d.latency_ms ?? 0),
         cached: d.cached === true,
-        label: labels.get(e.decision_id) ?? ruled.get(e.decision_id),
-        label_source: labels.has(e.decision_id) ? ("owner" as const) : ruled.has(e.decision_id) ? ("rule" as const) : undefined,
+        // Precedence: pressed by the owner, then the owner's approval or rejection, then a table.
+        label: labels.get(e.decision_id) ?? decided.get(e.decision_id)?.label ?? ruled.get(e.decision_id),
+        label_source: labels.has(e.decision_id) ? ("owner" as const) : decided.has(e.decision_id) ? ("decision" as const) : ruled.has(e.decision_id) ? ("rule" as const) : undefined,
+        ...(decided.has(e.decision_id) && !labels.has(e.decision_id) ? { label_other_reasons: decided.get(e.decision_id)!.other } : {}),
       };
     });
 }
@@ -370,7 +377,10 @@ export function candidateRules(dupAsk: number, boundary?: { low: number; high: n
   for (const wording of ["necessary", "necessary_or_useful"] as const)
     for (const nature_blocks of [true, false])
       for (const block of [0, 0.05, 0.1, 0.2, 0.3, 0.4])
-        for (const ask of [0.5, 0.75]) if (ask > block) out.push({ wording, block, ask, duplicate_ask: dupAsk, nature_blocks });
+        for (const ask of [0.5, 0.75])
+          // Also without the duplicate question: spec/08's criterion is about necessity and nature
+          // alone, and exact repeats are already asked about by the fixed repurchase rule.
+          for (const duplicate_ask of [dupAsk, Infinity]) if (ask > block) out.push({ wording, block, ask, duplicate_ask, nature_blocks });
   return out;
 }
 

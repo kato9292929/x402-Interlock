@@ -59,7 +59,10 @@ export interface GateView {
   /** Delivery Review of a paid purchase: what came back, against what was asked. Record only. */
   delivery_review?: Pick<DeliveryReview, "fields_ok" | "answers_prob" | "substance" | "fulfillment_score" | "jev_model" | "jev_status" | "jev_reason"> & { period: string; item_count: number | null; missing_fields: string[] };
   /** Spend Guard in shadow mode: what it would have done. It did not change this decision. */
-  spend_guard?: Pick<SpendGuardReview, "mode" | "would_have" | "would_have_reasons" | "necessity_prob" | "duplicate_prob" | "nature" | "jev_model" | "jev_status" | "jev_reason">;
+  spend_guard?: Pick<
+    SpendGuardReview,
+    "mode" | "decision_wording" | "would_have" | "would_have_reasons" | "necessity_prob" | "necessity_alt_prob" | "duplicate_prob" | "nature" | "jev_model" | "jev_status" | "jev_reason"
+  > & { asked_owner?: boolean };
   /** For a message sent through the gate: what the gate found in it (no matched values). */
   detected?: Detection[];
   message_id?: string;
@@ -271,8 +274,9 @@ export async function evaluate(input: {
     task = t.task;
   }
 
-  // Spend Guard (spec/07), shadow mode: asked in parallel with screening, recorded next to the
-  // decision, never applied. Skipped when the fixed rules already block (principle 7).
+  // Spend Guard (spec/07): asked in parallel with screening, recorded next to the decision.
+  // Shadow: never applied. Confirm (stage 5): applied below, only by asking the owner.
+  // Skipped when the fixed rules already block (principle 7).
   const spendGuard = task && pre.decision !== "BLOCK" ? startSpendGuard(task, input.url, paymentRequired, BigInt(target.amount), policy.token_decimals, l.readAll()) : undefined;
 
   const payToMainnet = mainnetScreeningAddress(policy, target.payTo as TestnetAddress);
@@ -302,6 +306,25 @@ export async function evaluate(input: {
     result.reasons.push("ACTION_ASK_HUMAN");
   }
   for (const s of report.skipped ?? []) result.reasons.push(s.code);
+
+  // Spend Guard in confirm mode (spec/07 section 3-5, spec/08). Applied after every fixed rule,
+  // and only one way: a purchase it would block or ask about, or could not judge, goes to the
+  // owner (PAY/CAP -> ASK_HUMAN). It never blocks, and a BLOCK stays a BLOCK.
+  const sgReview = spendGuard && "review" in spendGuard ? await spendGuard.review : undefined;
+  const sgReasons: ReasonCode[] =
+    spendGuard && "error" in spendGuard
+      ? ["SPEND_GUARD_UNAVAILABLE"] // thresholds not readable: fail closed
+      : sgReview?.mode === "confirm" && sgReview.would_have !== "none"
+        ? (sgReview.would_have_reasons as ReasonCode[])
+        : [];
+  let sgAsked = false;
+  if (sgReasons.length && result.decision !== "BLOCK") {
+    for (const r of sgReasons) if (!result.reasons.includes(r)) result.reasons.push(r);
+    if (result.decision === "PAY" || result.decision === "CAP") {
+      result.decision = "ASK_HUMAN";
+      sgAsked = true;
+    }
+  }
   const notify = task_id !== undefined && actionPolicy === "notify" && result.decision !== "BLOCK";
   if (notify) result.reasons.push("ACTION_NOTIFY");
   const selected = result.selected ? paymentRequired.accepts[options.indexOf(result.selected as (typeof options)[number])] : undefined;
@@ -317,7 +340,7 @@ export async function evaluate(input: {
     policy,
   });
   savePending(decision_id, { kind: "pay", task_id, paymentRequired, url: input.url, run_id, purpose: input.purpose, requirements: input.requirements, result, selected });
-  const sg = spendGuard ? await recordSpendGuard(decision_id, task!.task_id, input.url, target.amount, result.decision, spendGuard) : undefined;
+  const sg = sgReview ? recordSpendGuard(decision_id, task!.task_id, input.url, target.amount, result.decision, sgReview, sgAsked) : undefined;
 
   if (result.decision === "BLOCK" || !selected) {
     l.append(decision_id, "payment_result", { task_id: task_id ?? null, status: "NOT_EXECUTED", run_id, resource: input.url, reason: "BLOCK" });
@@ -385,17 +408,17 @@ function startSpendGuard(
   amount: bigint,
   decimals: number,
   all: LedgerEvent[],
-): Promise<SpendGuardReview> | undefined {
+): { review: Promise<SpendGuardReview> } | { error: string } | undefined {
   let t;
   try {
     t = loadThresholds();
   } catch (e) {
     console.log(`[spend-guard] thresholds not loaded: ${(e as Error).message}`);
-    return undefined;
+    return { error: (e as Error).message };
   }
   if (t.spend_guard.mode === "off") return undefined;
   const description = (paymentRequired.resource as { description?: unknown } | undefined)?.description;
-  return spendGuardShadow(
+  const review = spendGuardShadow(
     {
       task: { task_id: task.task_id, purpose: task.purpose, budget_atomic: toAtomic(task.budget.amount, decimals) },
       candidate: { url, description: typeof description === "string" ? description : null, amount_atomic: amount },
@@ -404,17 +427,22 @@ function startSpendGuard(
     },
     t,
   );
+  return { review };
 }
 
-async function recordSpendGuard(decision_id: string, task_id: string, url: string, amount: string, actual: Decision, p: Promise<SpendGuardReview>) {
-  const r = await p;
-  ledger().append(decision_id, "spend_guard_review", { task_id, url, amount, actual_decision: actual, ...r });
+function recordSpendGuard(decision_id: string, task_id: string, url: string, amount: string, actual: Decision, r: SpendGuardReview, asked: boolean) {
+  // asked_owner: this review is why the payment went to the owner (confirm mode).
+  ledger().append(decision_id, "spend_guard_review", { task_id, url, amount, actual_decision: actual, asked_owner: asked, ...r });
   console.log(
-    `[spend-guard] ${decision_id} shadow would_have=${r.would_have}${r.would_have_reasons.length ? ` (${r.would_have_reasons.join(", ")})` : ""} ` +
-      (r.jev_status === "OK" ? `necessity=${r.necessity_prob} duplicate=${r.duplicate_prob} nature=${r.nature} model=${r.jev_model}` : `UNAVAILABLE: ${r.jev_reason}`),
+    `[spend-guard] ${decision_id} ${r.mode}${asked ? " -> owner asked" : ""} would_have=${r.would_have}${r.would_have_reasons.length ? ` (${r.would_have_reasons.join(", ")})` : ""} ` +
+      (r.jev_status === "OK" ? `necessity=${r.necessity_prob} or_useful=${r.necessity_alt_prob ?? "-"} duplicate=${r.duplicate_prob} nature=${r.nature} model=${r.jev_model}` : `UNAVAILABLE: ${r.jev_reason}`),
   );
-  const { mode, would_have, would_have_reasons, necessity_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason } = r;
-  return { mode, would_have, would_have_reasons, necessity_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason };
+  return spendGuardSummary({ ...r, asked_owner: asked });
+}
+
+function spendGuardSummary(r: SpendGuardReview & { asked_owner?: boolean }): GateView["spend_guard"] {
+  const { mode, decision_wording, would_have, would_have_reasons, necessity_prob, necessity_alt_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason, asked_owner } = r;
+  return { mode, decision_wording, would_have, would_have_reasons, necessity_prob, necessity_alt_prob, duplicate_prob, nature, jev_model, jev_status, jev_reason, asked_owner };
 }
 
 function screeningFromAddressOrUndefined(): string | undefined {
@@ -650,10 +678,35 @@ function humanState(events: LedgerEvent[]): string | null {
   return terminal ? String(terminal.data.status) : h.length ? "REQUESTED" : null;
 }
 
+/**
+ * The owner's approval or rejection of a task payment, kept as a label for Spend Guard (spec/08):
+ * approved -> needed, rejected -> not needed. Real decisions instead of a made-up scenario. The
+ * other reasons the payment was asked about are kept with it, since a rejection may be about
+ * them; only payments that were asked about get a label (purchases Spend Guard let through do
+ * not), so these labels can show how often its asks were right, not what it missed.
+ */
+function recordDecisionLabel(decision_id: string, status: "APPROVED" | "REJECTED") {
+  const l = ledger();
+  const events = l.byDecision(decision_id);
+  const review = events.find((e) => e.event_type === "spend_guard_review");
+  const decided = events.find((e) => e.event_type === "gate_decision");
+  if (!review || !decided) return;
+  const reasons = (decided.data.reasons as string[]) ?? [];
+  l.append(decision_id, "owner_decision_label", {
+    target_decision_id: decision_id,
+    task_id: review.data.task_id ?? null,
+    label: status === "APPROVED" ? "needed" : "unneeded",
+    decision: status,
+    asked_by_spend_guard: review.data.asked_owner === true,
+    other_reasons: reasons.filter((r) => !r.startsWith("SPEND_GUARD_") && r !== "WITHIN_POLICY" && r !== "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"),
+  });
+}
+
 function closeHuman(decision_id: string, status: "REJECTED" | "EXPIRED" | "CANCELLED", detail: Record<string, unknown>) {
   const l = ledger();
   const p = loadPending(decision_id);
   l.append(decision_id, "human_verification", { task_id: p?.task_id ?? null, status, ...detail });
+  if (status === "REJECTED") recordDecisionLabel(decision_id, "REJECTED");
   if (p?.kind === "action" || p?.kind === "send") {
     l.append(decision_id, "action_judged", { task_id: p.task_id ?? null, phase: "human", action_type: p.action_type, outcome: `HUMAN_${status}` });
     if (p.kind === "send") l.append(decision_id, "action_sent", { task_id: p.task_id ?? null, status: "NOT_SENT", reason: `HUMAN_${status}`, channel: p.channel });
@@ -708,6 +761,7 @@ export async function approve(decision_id: string, result: IDKitResult): Promise
     nullifier: outcome.nullifier,
     world_response: outcome.world_response ?? null,
   });
+  recordDecisionLabel(decision_id, "APPROVED");
   // A message the gate holds: send exactly the bytes the owner approved.
   if (p?.kind === "send") {
     ledger().append(decision_id, "action_judged", { task_id: p.task_id ?? null, phase: "human", action_type: p.action_type, outcome: "APPROVED" });
@@ -780,6 +834,7 @@ export function view(decision_id: string, baseUrl?: string): GateView {
     result: res,
     detected: (action?.data.detected as Detection[] | undefined) ?? undefined,
     delivery_review: deliverySummary(events),
+    spend_guard: ((sg) => (sg ? spendGuardSummary(sg.data as unknown as SpendGuardReview & { asked_owner?: boolean }) : undefined))(events.find((e) => e.event_type === "spend_guard_review")),
     message_id: (sent?.data.message_id as string | undefined) ?? undefined,
   };
 }

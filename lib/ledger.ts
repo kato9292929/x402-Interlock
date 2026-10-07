@@ -19,6 +19,7 @@ export type LedgerEventType =
   | "owner_label_reset"
   | "rule_label_set"
   | "owner_label_withdrawn"
+  | "owner_decision_label"
   | "rule_label"
   | "rule_task_label"
   | "spend_guard_replay"

@@ -71,6 +71,17 @@ export default async function ApprovePage({ params }: PageProps<"/approve/[id]">
               <dt>agent says</dt><dd>{s.purpose}</dd>
               {v.task_id && (<><dt>task</dt><dd><code>{v.task_id}</code></dd></>)}
               <dt>why asked</dt><dd><code>{v.reasons.join(", ")}</code></dd>
+              {v.spend_guard?.asked_owner && (
+                <>
+                  <dt>Spend Guard</dt>
+                  <dd>
+                    {v.spend_guard.jev_status === "OK"
+                      ? `may not be needed for the task: "necessary or useful" ${v.spend_guard.necessity_alt_prob ?? "-"}, nature ${v.spend_guard.nature}`
+                      : "could not judge this purchase"}{" "}
+                    <span className="muted">(a model&apos;s answer, not a verdict: it only asks you; approve or reject is recorded as your label)</span>
+                  </dd>
+                </>
+              )}
               <dt>expires</dt><dd>{new Date(req.rp_context.expires_at * 1000).toLocaleTimeString()}</dd>
             </dl>
           </section>
