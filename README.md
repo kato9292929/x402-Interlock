@@ -225,7 +225,41 @@ Existing payment events now carry `task_id`. All of these are in the same hash c
   catch a runaway agent. The budget only caps the loss.
 
 
-## Agent Procurement Policy Engine: Spend Guard (shadow) and Delivery Review (record)
+## Status in three lists (2026-10-07)
+
+What was run against real services or devnet, what only the offline tests cover, and what is
+known not to be checked. Details and evidence: the tables in each section below.
+
+**1. Checked live** (real services or Solana devnet, on the owner's Mac)
+
+| Part | When |
+|---|---|
+| Base Sepolia: safe payment paid, flagged payee blocked, World ID approve / reject / expire | 2026-09-26 |
+| Allowance create / read / revoke on devnet | 2026-09-30 |
+| Task, pull (`transferFixed`), x402 Solana payment through PayAI, stop at budget | 2026-10-01 |
+| Declared actions (`disclose` / `commit` → ask, `impersonate` → deny); close, then pay → `TASK_NOT_ACTIVE` | 2026-10-02 |
+| Messages through the gate: the owner's registered address found without a declared type → asked → rejected, not sent | 2026-10-02 |
+| Jev: live call and answer shapes; Spend Guard shadow; Delivery Review on 3 purchases | 2026-10-03 / 04 |
+| Stage 4: 48 Spend Guard reviews against the owner's labels | 2026-10-06 |
+| Stage 5 confirm mode: 2 off-topic purchases sent to ASK_HUMAN, not paid | 2026-10-07 |
+
+**2. Offline tests only** (`npm test`, local stand-ins for the chain and the APIs)
+
+- Reserve / confirm / release: `PURCHASE_IN_FLIGHT`, `PURCHASED_SINCE_DECISION`, `PREVIOUS_PAYMENT_UNCONFIRMED`, owner release.
+- A Solana send with no confirmation in time recorded as `ALLOWANCE_PULL_UNCONFIRMED`, seller not paid.
+- Confirm mode: approval → paid and labelled; Jev down or thresholds unreadable → asked; a fixed-rule BLOCK stays a BLOCK.
+- Judge provider switch: Clef only against a stand-in with the same contract; never run against a real Clef server.
+- Replay of past reviews (`appe-compare`), labels by construction (`appe-label --from-file`), the keyword baseline (`appe-keyword-baseline`).
+- One-command scripts that start and stop the server (`spend-guard-confirm-run`, `task -- close-all`): start, stop and reuse checked in the cloud without devnet keys. The 600 s approval window has not been tried against World ID.
+
+**3. Not checked**
+
+- That a rejection in confirm mode is recorded as a label on devnet (the approval expired before the decision).
+- Several server processes sharing one ledger file (the reservation is atomic only within one process).
+- Reconciling a pull that landed while the seller was not paid (the amount stays in the gate's account).
+- One test run failed once (2026-10-07); the test's name was not captured and the failure did not reproduce in 13 runs. Cause unknown.
+
+## Agent Procurement Policy Engine: Spend Guard (off, removable) and Delivery Review (record)
 
 Brief: [`spec/07-agent-procurement-policy-engine.md`](spec/07-agent-procurement-policy-engine.md),
 implementing the concept published on 2026-09-20. Staying within budget and spending well are
@@ -233,7 +267,16 @@ different things. Everything above enforces the first in code (on-chain remainin
 screening, limits, signing, task state, deterministic matching). Spend Guard adds a judgement of
 meaning: is this purchase needed for the task, and does it repeat one already made?
 
-**Stage reached: 1–4 of 8 done; stage 5 in confirm mode (built, devnet run pending).** Spend
+**Decision (2026-10-07, [`spec/08`](spec/08-stage4-review-and-validation-order.md) section 10):
+the gate's core is the deterministic checks (per-task Allowance, reserve / confirm / release,
+the outgoing-message check, approval bound to the content hash). Spend Guard stays as a removable
+part and is **off** in the shipped config (`spend_guard.mode: "off"`: nothing is sent to the
+judge). Stages 6–8 are not started. Why: a keyword rule with no model catches the clearly
+unrelated purchases too (11 of 18, none needed stopped; Jev 20 of 21); the model's extra catches
+were 6 subtle ones in made-up scenarios, and how often real agents make unneeded purchases has not
+been measured.**
+
+What was built and checked before that decision: **stages 1–4 done; stage 5 in confirm mode.** Spend
 Guard was checked against the owner's labels on 48 devnet purchases (spec/08) and now runs in
 **confirm mode**: a purchase it judges out of place goes to the owner (World ID) instead of being
 paid automatically. **It never blocks on its own**, it never loosens a fixed rule (a BLOCK stays a

@@ -11,7 +11,8 @@ export interface Server {
   /** true when this script started the server (and will stop it) */
   started: boolean;
   log?: string;
-  stop(): void;
+  /** stops a server this script started and waits until it has exited (SIGKILL after 5 s) */
+  stop(): Promise<void>;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -30,7 +31,7 @@ export async function ensureServer(base: string, headers: Record<string, string>
   if (already !== null) {
     if (already === 401) throw new Error(`the server at ${base} refused OWNER_TOKEN: it was started with another .env.local; stop it and run this again`);
     console.log(`using the server already running at ${base} (its settings are the ones it was started with)`);
-    return { started: false, stop() {} };
+    return { started: false, async stop() {} };
   }
 
   const url = new URL(base);
@@ -82,8 +83,20 @@ export async function ensureServer(base: string, headers: Record<string, string>
       return {
         started: true,
         log,
-        stop() {
-          stop();
+        async stop() {
+          if (exited === undefined) {
+            const gone = new Promise<void>((r) => child.once("exit", () => r()));
+            stop();
+            const killed = setTimeout(() => {
+              try {
+                process.kill(-child.pid!, "SIGKILL");
+              } catch {
+                /* already gone */
+              }
+            }, 5000);
+            await gone;
+            clearTimeout(killed);
+          }
           console.log("server stopped");
         },
       };
