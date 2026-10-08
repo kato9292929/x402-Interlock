@@ -5,6 +5,7 @@ import { choice, noul } from "@typesafe-ai/sdk";
 import { fromAtomic } from "./amount";
 import { callJev, type JevOptions, type JevResult } from "./jev";
 import type { LedgerEvent } from "./ledger";
+import { deliveryHistory } from "./delivery-history";
 
 // Agent Procurement Policy Engine (spec/07). This file: thresholds and Spend Guard.
 // Spend Guard asks Jev whether a purchase is needed for the task and whether it repeats one
@@ -36,7 +37,7 @@ export interface AppeThresholds {
     /** section 4: also ask the necessity question in its other wording, in a separate call */
     compare_necessity_wording?: boolean;
   };
-  delivery_review: { mode: "off" | "record"; body_max_bytes: number };
+  delivery_review: { mode: "off" | "record"; body_max_bytes: number; history?: { window: number; poor_at: number; mismatch_at: number } };
 }
 
 export interface ProviderConfig {
@@ -132,10 +133,16 @@ export interface SpendGuardInput {
 export function spendGuardState(i: SpendGuardInput, t: AppeThresholds) {
   const paid = i.ledger.filter((e) => e.event_type === "payment_result" && e.data.status === "PAID" && e.data.task_id === i.task.task_id);
   const used = paid.reduce((s, e) => s + BigInt(String(e.data.amount)), 0n);
+  // What earlier Delivery Reviews of a target observed (stage 6): context for the judge, not a rule.
+  const delivered = (url: string) => {
+    const h = deliveryHistory(i.ledger, url, t.delivery_review?.history?.window ?? 3);
+    return h.count ? { reviews: h.count, fields_ok_rate: h.fields_ok_rate, substance: h.substance, fulfillment_median: h.fulfillment_median, last_seen: h.last_seen } : null;
+  };
   const history = paid.slice(-t.spend_guard.history_limit).map((e) => ({
     url: purchaseTarget(String(e.data.resource)),
     amount: `${fromAtomic(String(e.data.amount), i.decimals)} USDC`,
     data_id: (e.data.body_sha256 as string | undefined) ?? null,
+    delivery: delivered(String(e.data.resource)),
   }));
   const usd = (a: bigint) => `${fromAtomic(a.toString(), i.decimals)} USDC`;
   return {
@@ -149,6 +156,7 @@ export function spendGuardState(i: SpendGuardInput, t: AppeThresholds) {
       description: i.candidate.description ? i.candidate.description.slice(0, t.spend_guard.description_max_chars) : null,
       amount: usd(i.candidate.amount_atomic),
       coverage: null, // not stated in a machine-readable form by the demo sellers
+      delivery_history: delivered(i.candidate.url),
     },
     history,
   };

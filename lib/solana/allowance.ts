@@ -2,7 +2,7 @@ import { address, createClient, createSolanaRpc, getBase64Encoder, isAddress, ty
 import { solanaRpc } from "@solana/kit-plugin-rpc";
 import { signer } from "@solana/kit-plugin-signer";
 import { findAssociatedTokenPda, getCreateAssociatedTokenIdempotentInstructionAsync, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
-import { findFixedDelegationPda, findSubscriptionAuthorityPda, getFixedDelegationDecoder, subscriptionsProgram } from "@solana/subscriptions";
+import { findFixedDelegationPda, findSubscriptionAuthorityPda, getFixedDelegationDecoder, subscriptionsProgram, SUBSCRIPTIONS_PROGRAM_ADDRESS } from "@solana/subscriptions";
 import { agentSolanaAddress, gateSigner, ownerSigner, sellerSolanaAddress, solanaMint, solanaRpcSubscriptionsUrl, solanaRpcUrl } from "./config";
 
 // A task's budget is a Fixed delegation ("Allowance") in the Solana Subscriptions program
@@ -291,6 +291,9 @@ export function snapshotFromAccount(
   account: { owner: string; data_base64: string } | null,
 ): AllowanceSnapshot {
   if (!account) return { address: allowance, slot: slot.toString(), exists: false };
+  // An account no longer owned by the Subscriptions program (closed, then reused or left with
+  // lamports) is not a delegation any more: reading it as one would misread its data.
+  if (account.owner !== SUBSCRIPTIONS_PROGRAM_ADDRESS) return { address: allowance, slot: slot.toString(), exists: false, owner_program: account.owner };
   const d = getFixedDelegationDecoder().decode(getBase64Encoder().encode(account.data_base64));
   return {
     address: allowance,

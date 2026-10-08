@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { withFileLock } from "./lock";
 
 export type LedgerEventType =
   | "payment_candidate"
@@ -20,6 +21,9 @@ export type LedgerEventType =
   | "rule_label_set"
   | "owner_label_withdrawn"
   | "owner_decision_label"
+  | "budget_reserved"
+  | "payment_reconciled"
+  | "task_resumed"
   | "rule_label"
   | "rule_task_label"
   | "spend_guard_replay"
@@ -82,8 +86,23 @@ export class Ledger {
       .map((l) => JSON.parse(l) as LedgerEvent);
   }
 
-  /** Append-only. Existing lines are never rewritten. Sync I/O keeps appends ordered within one process. */
+  /**
+   * Run `fn` holding the ledger's lock: no other process appends meanwhile. Use it around a
+   * check-then-append that must be atomic across processes (a reservation). Re-entrant.
+   */
+  locked<T>(fn: () => T): T {
+    return withFileLock(`${this.file}.lock`, fn);
+  }
+
+  /**
+   * Append-only. Existing lines are never rewritten. Under the ledger lock, so processes that
+   * share the file cannot fork the hash chain or interleave.
+   */
   append(decision_id: string, event_type: LedgerEventType, data: Record<string, unknown>): LedgerEvent {
+    return this.locked(() => this.appendUnlocked(decision_id, event_type, data));
+  }
+
+  private appendUnlocked(decision_id: string, event_type: LedgerEventType, data: Record<string, unknown>): LedgerEvent {
     mkdirSync(path.dirname(this.file), { recursive: true });
     const all = this.readAll();
     const prev = all.length ? all[all.length - 1].event_hash : null;

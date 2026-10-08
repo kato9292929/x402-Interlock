@@ -283,6 +283,10 @@ known not to be checked. Details and evidence: the tables in each section below.
 
 **2. Offline tests only** (`npm test`, local stand-ins for the chain and the APIs)
 
+- Stage 6: delivery history rules (`DELIVERY_HISTORY_POOR` / `_MISMATCH`), Spend Guard state with past deliveries.
+- Stage 7: Procurement Router (code filter, don't buy, judge choice, re-route). Measured without the judge: cheapest-only 4/9, code + cheapest 5/9, don't-buy 3/3 (`research/router-eval.ts`); the judge is not measured yet.
+- Stage 8: ledger lock across processes (4 processes; fails without the lock), budget reservation (`BUDGET_RESERVED`), stop conditions (`TASK_PAYMENT_UNCONFIRMED`, `TASK_CONSECUTIVE_FAILURES`), `task -- reconcile`, closing a gone Allowance (`ALLOWANCE_ALREADY_GONE`).
+
 - Reserve / confirm / release: `PURCHASE_IN_FLIGHT`, `PURCHASED_SINCE_DECISION`, `PREVIOUS_PAYMENT_UNCONFIRMED`, owner release.
 - A Solana send with no confirmation in time recorded as `ALLOWANCE_PULL_UNCONFIRMED`, seller not paid.
 - Confirm mode: approval → paid and labelled; Jev down or thresholds unreadable → asked; a fixed-rule BLOCK stays a BLOCK.
@@ -291,6 +295,9 @@ known not to be checked. Details and evidence: the tables in each section below.
 - One-command scripts that start and stop the server (`spend-guard-confirm-run`, `task -- close-all`): start, stop and reuse checked in the cloud without devnet keys. The 600 s approval window has not been tried against World ID.
 
 **3. Not checked**
+
+- Whether the judge model adds anything to Delivery Review or to the Router: the cases and criteria are written (spec/08 sections 11-12), but every Jev call failed with HTTP 401 in the run environment. Not measured, not "no uplift".
+- Stages 6-8 on devnet (`npm run stages-run`).
 
 - That a rejection in confirm mode is recorded as a label on devnet (the approval expired before the decision).
 - Several server processes sharing one ledger file (the reservation is atomic only within one process).

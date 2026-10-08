@@ -15,11 +15,15 @@
 //   npm run task -- release <decision_id> --reason "pull not on chain, seller not paid"
 //                                           # owner: free a purchase whose payment outcome was unknown
 //                                           # (unconfirmed pull / no answer from the seller), after checking the chain
+//   npm run task -- reconcile [--dry-run]   # settle payments whose Allowance pull timed out, from the chain (direct)
+//   npm run task -- resume <task_id> --reason "..."   # resume a task stopped after payment failures in a row
 //   npm run task -- seller-account          # create the seller's USDC token account, paid by the owner (direct)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { releaseReservation } from "../lib/gate";
 import { ensureServer } from "./lib/server";
+import { reconcileUnconfirmed } from "../lib/reconcile";
+import { resumeTask } from "../lib/tasks";
 import { SolanaAllowanceChain, SolanaSetupError } from "../lib/solana/allowance";
 import { formatSolanaError } from "../lib/solana/errors";
 import { addProtected, maskedProtected, removeProtected } from "../lib/protect";
@@ -91,6 +95,20 @@ async function main() {
     await setEnv(process.argv[3]);
   } else if (cmd === "new-token") {
     newToken(process.argv[3]);
+  } else if (cmd === "reconcile") {
+    const rows = await reconcileUnconfirmed({ dryRun: process.argv.includes("--dry-run") });
+    if (!rows.length) console.log("no payment with an unknown outcome");
+    for (const r of rows) console.log(`${r.outcome.padEnd(16)} ${r.decision_id}  task ${r.task_id}  ${r.amount} atomic  ${r.reason}\n    ${r.detail}`);
+    if (process.argv.includes("--dry-run") && rows.length) console.log("\n--dry-run: nothing written");
+  } else if (cmd === "resume") {
+    const id = process.argv[3];
+    if (!id) throw new SolanaSetupError('usage: npm run task -- resume <task_id> --reason "what was wrong and why it is fixed"');
+    try {
+      resumeTask(id, arg("--reason") ?? "");
+    } catch (e) {
+      throw new SolanaSetupError((e as Error).message);
+    }
+    console.log(`resumed ${id}: payment failures before now no longer stop it`);
   } else if (cmd === "release") {
     // Direct, like protect: the owner runs this on the gate's machine; it appends to the ledger.
     const id = process.argv[3];
@@ -108,7 +126,7 @@ async function main() {
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|close-all|preflight|init-authority|new-address|new-token|set-env|protect|release|seller-account");
+    console.log("usage: npm run task -- open|list|show|close|close-all|reconcile|resume|preflight|init-authority|new-address|new-token|set-env|protect|release|seller-account");
   }
 }
 
