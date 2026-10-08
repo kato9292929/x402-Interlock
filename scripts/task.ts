@@ -4,6 +4,7 @@
 //   npm run task -- list
 //   npm run task -- show task_...
 //   npm run task -- close task_...          # revokes the Allowance on chain (irreversible)
+//   npm run task -- close-all [--dry-run]   # every task not yet closed; starts the server if none runs (irreversible)
 //   npm run task -- preflight               # check SOL, the owner's USDC token account and the authority (direct, read-only)
 //   npm run task -- init-authority          # one-time: owner's SubscriptionAuthority for USDC (direct, needs OWNER_SOLANA_PRIVATE_KEY)
 //   npm run task -- new-address seller --env SELLER_SOLANA_PAY_TO   # new keypair in keys/seller.json; address into .env.local
@@ -18,6 +19,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { releaseReservation } from "../lib/gate";
+import { ensureServer } from "./lib/server";
 import { SolanaAllowanceChain, SolanaSetupError } from "../lib/solana/allowance";
 import { formatSolanaError } from "../lib/solana/errors";
 import { addProtected, maskedProtected, removeProtected } from "../lib/protect";
@@ -68,6 +70,8 @@ async function main() {
     const t = await call("POST", `/api/tasks/${process.argv[3]}/close`);
     console.log(JSON.stringify(t, null, 2));
     console.log(`\nRevoke tx: https://explorer.solana.com/tx/${t.revoke_tx}?cluster=devnet`);
+  } else if (cmd === "close-all") {
+    await closeAll(process.argv.includes("--dry-run"));
   } else if (cmd === "preflight") {
     const r = await new SolanaAllowanceChain().preflight();
     console.log(JSON.stringify(r, null, 2));
@@ -104,7 +108,33 @@ async function main() {
     if ("signature" in r) console.log(`\nhttps://explorer.solana.com/tx/${r.signature}?cluster=devnet`);
     else console.log("\nalready exists; nothing to do");
   } else {
-    console.log("usage: npm run task -- open|list|show|close|preflight|init-authority|new-address|new-token|set-env|protect|release|seller-account");
+    console.log("usage: npm run task -- open|list|show|close|close-all|preflight|init-authority|new-address|new-token|set-env|protect|release|seller-account");
+  }
+}
+
+/** Close every task that is not closed yet: each Allowance is revoked on chain. One failure does not stop the rest. */
+async function closeAll(dry: boolean) {
+  const server = await ensureServer(BASE, headers, { name: "task-close-all" });
+  try {
+    const open = ((await call("GET", "/api/tasks")) as { task_id: string; status: string; purpose: string; budget: { amount: string } }[]).filter((t) => t.status !== "closed");
+    console.log(`${open.length} task(s) not closed${dry ? " (--dry-run: nothing revoked)" : ""}`);
+    let failed = 0;
+    for (const t of open) {
+      if (dry) {
+        console.log(`  ${t.task_id}  ${t.budget.amount} USDC  "${t.purpose.slice(0, 60)}"`);
+        continue;
+      }
+      try {
+        const c = await call("POST", `/api/tasks/${t.task_id}/close`);
+        console.log(`  closed ${t.task_id}  revoke https://explorer.solana.com/tx/${c.revoke_tx}?cluster=devnet`);
+      } catch (e) {
+        failed++;
+        console.log(`  FAILED ${t.task_id}: ${(e as Error).message.split("\n")[0]}`);
+      }
+    }
+    if (failed) throw new SolanaSetupError(`${failed} task(s) could not be closed; run again, or close them one by one to see the full error`);
+  } finally {
+    await server.stop();
   }
 }
 
@@ -199,7 +229,7 @@ async function newAddress(name: string | undefined, envName: string | undefined)
   console.log(JSON.stringify({ name, address: kp.address, keypair_file: file, env: envName ? `${envName} written to ${ENV_FILE}` : undefined }, null, 2));
 }
 
-main().catch((e) => {
+main().then(() => process.exit(0)).catch((e) => {
   // Setup problems are already written for a person; anything else is a chain error whose
   // simulation logs and causes would be lost by printing only e.message.
   console.error(e instanceof SolanaSetupError ? e.message : formatSolanaError(e));

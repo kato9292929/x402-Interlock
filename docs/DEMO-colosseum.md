@@ -339,10 +339,9 @@ One task carries the whole demo. The order follows the argument:
 |---|---|---|
 | 1 | Task budget and payments | The budget lives on Solana as an Allowance delegated to the gate's key. The agent holds no key. Three payments go through; the fourth stops on the chain's remaining balance. |
 | 4 | Muse: the gate reads the message | A budget cannot see a zero-dollar action. The agent sends a message with the owner's address and declares nothing; the gate finds the address in the text and holds it. The owner rejects; the venue never receives it. |
-| 2 | Declared actions | `impersonate` is denied outright: no approval page, no human can override it. |
 | 3 | Close the task | The owner revokes the Allowance on chain. The next payment stops before anything else is checked. |
 
-Scenario 4 comes second on purpose: it is the reason the project exists, and it lands right after
+(Declared actions, scenario 2, are left out of the video since 2026-10-08.) Scenario 4 comes second on purpose: it is the reason the project exists, and it lands right after
 the viewer has seen that budgets work.
 
 ### Before recording
@@ -367,13 +366,17 @@ mv data/inbox.jsonl data/inbox-before-recording.jsonl
 
 ### Technical demo (≤ 3:00): scenes, commands, what to point at
 
+Three scenes (decided 2026-10-08): the budget stops a payment, a message with the owner's address
+is held, a closed task stops the next payment. The declared-actions scene (`impersonate` denied)
+is left out of the video; it is in the README status table.
+
 Replace `task_…` with the id printed by the first command.
 
-**0:00–0:15 · What it is**
+**0:00–0:20 · What it is**
 - Show the README diagram (top of the repo) or say it over the terminal:
   "The agent holds no key. Every payment and every message goes through this gate."
 
-**0:15–1:15 · Scenario 1: the budget is on Solana**
+**0:20–1:20 · Scene 1: the budget is on Solana**
 
 ```bash
 npm run task -- open --purpose "Make one music video" --budget 1.00 --expires 2026-10-13T00:00:00Z
@@ -392,7 +395,7 @@ npm run agent -- sol-clip --task task_… --times 4
   chain, not from our database.
 - Optional (5 s): one payment tx in Explorer, the `transferFixed` pull under the delegation.
 
-**1:15–2:05 · Scenario 4: Muse**
+**1:20–2:15 · Scene 2: a message with the owner's address (Muse)**
 
 ```bash
 npm run agent -- send --task task_… --to venue@example.com --body "Saturday 18:00 works for us."
@@ -411,14 +414,7 @@ npm run agent -- send --task task_… --to venue@example.com --body "Great, the 
   which parts matched, no address.
 - Say: "A zero-dollar action, stopped by what it says, not by how much it costs."
 
-**2:05–2:20 · Scenario 2: some things no one can approve**
-
-```bash
-npm run agent -- act impersonate --task task_… --payload '{"description":"post on social media as the owner"}'
-```
-- `DENY ACTION_DENIED -> DENIED`, and no approval URL is printed.
-
-**2:20–2:50 · Scenario 3: the owner pulls the plug**
+**2:15–2:45 · Scene 3: the owner closes the task**
 
 ```bash
 npm run task -- close task_…
@@ -427,41 +423,16 @@ npm run agent -- sol-clip --task task_…
 - Point at the `Revoke tx`; Explorer on the Allowance: account not found.
 - `BLOCK TASK_NOT_ACTIVE`, before screening. /tasks: closed.
 
-**2:50–3:00 · Close**
+**2:45–3:00 · How we decided on the AI judge, and close**
+- The README table "How we decided whether to use an AI judge", one sentence: "keywords catch the
+  clearly unrelated ones; the model added 8 subjective catches, so it is off."
 - Timeline header: `ledger hash chain intact`. The GitHub repo URL on screen.
 
 ### Pitch video (≤ 2:00): outline
 
-Talking head or voice over slides; 15–20 s of the demo footage inside.
-
-| Time | Content |
-|---|---|
-| 0:00–0:20 | The problem, as a story: an agent booking a venue sent the owner's home address. It cost nothing, so no spending limit saw it. |
-| 0:20–0:45 | Why budgets are not enough: they cap money; they cannot read what an agent says. And a budget an agent holds the key to is not a limit. |
-| 0:45–1:15 | x402 Interlock: one gate the agent must go through. Budgets are Solana Allowances delegated to the gate's key; payments are x402; messages are sent by the gate, which reads them. Clip: the Muse message held, the inbox empty. |
-| 1:15–1:35 | Who it is for: people and teams who let agents spend and talk for them (bookings, procurement, outreach). |
-| 1:35–1:50 | What is real today: everything shown ran on devnet (list from the README status table). |
-| 1:50–2:00 | Next: reading meaning, not only data (phase 2), and "is this still the task?" (Jev). Team, one line. |
-
-Do not claim users, traction or validation that do not exist. If the form asks for demand
-validation and there is none yet, say what you will measure and how.
+Moved to [`docs/SUBMISSION-colosseum.md`](SUBMISSION-colosseum.md) (2026-10-08), with the
+decision on the AI judge and the plain statement that there are no users yet.
 
 ### Submission text: draft
 
-Fill in the bracketed parts yourself.
-
-- **Name:** x402 Interlock
-- **One-line description:** A gate between an AI agent and everything it does: per-task budgets as
-  Solana Allowances delegated to the gate, x402 payments, and outgoing messages that the gate reads
-  and holds when they disclose the owner's data.
-- **Blockchains and tools:** Solana devnet; Solana Subscriptions & Allowances program
-  (`@solana/subscriptions`, Fixed delegation, `transferFixed`, revoke); `@solana/kit` 7; x402
-  (`@x402/svm`, PayAI facilitator); Intercepta (address and token screening); World ID (owner
-  approval); Next.js.
-- **What is verified:** the README "Status (Colosseum build)" table, with devnet transaction links.
-- **Team:** [names, backgrounds, previous work]
-- **Location:** [city, country]
-- **Logo:** [file]
-- **GitHub:** https://github.com/kato9292929/x402-Interlock (public)
-- **Pitch video:** [link] · **Technical demo:** [link]
-- **Go-to-market / validation / distribution:** [your own answer; see the note under the pitch outline]
+Moved to [`docs/SUBMISSION-colosseum.md`](SUBMISSION-colosseum.md) (2026-10-08).

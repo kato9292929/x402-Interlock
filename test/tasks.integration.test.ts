@@ -114,7 +114,14 @@ const interceptaCalls: string[] = [];
 let interceptaQuickScanStatus = 200;
 const listen = (s: Server) => new Promise<string>((r) => s.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(s.address() as AddressInfo).port}`)));
 
+// The shipped config has Spend Guard off (2026-10-07). These tests exercise it in confirm mode
+// (the validated setting) unless a test says otherwise; one test checks the shipped "off".
+const SHIPPED_THRESHOLDS = path.join(process.cwd(), "config", "appe-thresholds.json");
 before(async () => {
+  const shippedAppe = JSON.parse(readFileSync(SHIPPED_THRESHOLDS, "utf8"));
+  const confirmFile = path.join(mkdtempSync(path.join(tmpdir(), "appe-")), "appe-thresholds.json");
+  writeFileSync(confirmFile, JSON.stringify({ ...shippedAppe, spend_guard: { ...shippedAppe.spend_guard, mode: "confirm" } }));
+  process.env.APPE_THRESHOLDS_PATH = confirmFile;
   const dir = process.env.TEST_DATA_DIR ?? mkdtempSync(path.join(tmpdir(), "tasks-"));
   process.env.DATA_DIR = dir;
   process.env.LEDGER_PATH = path.join(dir, "ledger.jsonl");
@@ -669,7 +676,7 @@ const freshJev = async () => (await import("../lib/jev")).clearJevCache(); // id
 
 /** Run with config/appe-thresholds.json changed by `patch` (spend_guard fields), then restore. */
 async function withSpendGuard<T>(patch: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
-  const base = JSON.parse(readFileSync(path.join(process.cwd(), "config", "appe-thresholds.json"), "utf8"));
+  const base = JSON.parse(readFileSync(process.env.APPE_THRESHOLDS_PATH ?? SHIPPED_THRESHOLDS, "utf8"));
   const file = path.join(mkdtempSync(path.join(tmpdir(), "appe-")), "appe-thresholds.json");
   writeFileSync(file, JSON.stringify({ ...base, spend_guard: { ...base.spend_guard, ...patch } }));
   const saved = process.env.APPE_THRESHOLDS_PATH;
@@ -877,16 +884,33 @@ test("confirm: thresholds that cannot be read -> asked, not paid (fail closed)",
   }
 });
 
+test("shipped config: Spend Guard off -> not asked, nothing sent to the judge, the payment goes through", async () => {
+  await freshJev();
+  const t = await openFor("Prepare the quarterly tax filing");
+  const sent = spendGuardStates.length;
+  const saved = process.env.APPE_THRESHOLDS_PATH;
+  process.env.APPE_THRESHOLDS_PATH = SHIPPED_THRESHOLDS;
+  try {
+    const v = await pay(t.task_id);
+    assert.equal(v.status, "PAID");
+    assert.equal(review(v.decision_id), undefined);
+    assert.equal(spendGuardStates.length, sent);
+  } finally {
+    if (saved === undefined) delete process.env.APPE_THRESHOLDS_PATH;
+    else process.env.APPE_THRESHOLDS_PATH = saved;
+  }
+});
+
 test("confirm needs validated: true; automatic blocking by Spend Guard is not a mode", async () => {
   const { loadThresholds } = await import("../lib/appe");
-  const base = JSON.parse(readFileSync(path.join(process.cwd(), "config", "appe-thresholds.json"), "utf8"));
+  const base = JSON.parse(readFileSync(SHIPPED_THRESHOLDS, "utf8"));
   const dir = mkdtempSync(path.join(tmpdir(), "appe-"));
   const write = (o: unknown) => {
     const f = path.join(dir, `${Math.random()}.json`);
     writeFileSync(f, JSON.stringify(o));
     return f;
   };
-  assert.throws(() => loadThresholds(write({ ...base, validated: false })), /needs validated: true/);
+  assert.throws(() => loadThresholds(write({ ...base, validated: false, spend_guard: { ...base.spend_guard, mode: "confirm" } })), /needs validated: true/);
   assert.throws(() => loadThresholds(write({ ...base, spend_guard: { ...base.spend_guard, mode: "enforce" } })), /off, shadow or confirm/);
 });
 
