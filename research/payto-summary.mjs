@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { getDomain } from "tldts";
 
 const argv = process.argv.slice(2);
 const NET = argv.includes("--network") ? argv.splice(argv.indexOf("--network"), 2)[1] : null; // spec/10 revision 2: "Solana"
@@ -133,6 +134,20 @@ for (const b of ["CoinGecko", "Exa"]) {
   brandShare[b] = { named_hosts: [...R].filter(([, bs]) => bs.has(b)).length, readable: hs.length, distinct_payTo: as.size };
 }
 
+// spec/10 c56f71a: a payTo shared by hosts on N or more unrelated registrable domains (Public Suffix
+// List, private section included) is set apart as a platform candidate; W' is W without them.
+const regDomain = (h) => getDomain(h, { allowPrivateDomains: true }) ?? h;
+const platformSplit = (N) => {
+  const cand = new Set([...hostsByAddr].filter(([, hs]) => new Set([...hs].map(regDomain)).size >= N).map(([k]) => k));
+  const keep = readable.filter((h) => [...pays.get(h)].map(addrKey).some((k) => !cand.has(k)));
+  const addrs = new Set(keep.flatMap((h) => [...pays.get(h)].map(addrKey).filter((k) => !cand.has(k))));
+  const doms = new Set(keep.map(regDomain));
+  return { N, candidates: cand.size, candidate_hosts: readable.length - keep.length, hosts: keep.length, payTo: addrs.size, W: addrs.size ? +(keep.length / addrs.size).toFixed(2) : null, domains: doms.size, W_d: addrs.size ? +(doms.size / addrs.size).toFixed(2) : null };
+};
+const split = platformSplit(5);
+const allDomains = new Set(readable.map(regDomain)).size;
+if (process.env.PAIRS) for (const [k, hs] of hostsByAddr) { const d = new Set([...hs].map(regDomain)); if (d.size >= 2) console.error(`shared ${k.slice(0, 14)} hosts ${hs.size} domains ${d.size}: ${[...d].join(" ")}`); }
+
 const pct = (a, b) => `${((100 * a) / b).toFixed(1)}%`;
 console.log(`denominator (eligible hosts)               ${DENOM}`);
 console.log(`probed hosts                               ${probed.size}${probed.size < DENOM ? "  (run incomplete)" : ""}`);
@@ -145,6 +160,10 @@ console.log(`  per network                              ${JSON.stringify(perNet)
 console.log(`  hosts paid to the largest payTo          ${ranked[0]?.size ?? 0}`);
 console.log(`  share of hosts paid to the top 10 payTo  ${readable.length ? pct(top10Hosts.size, readable.length) : "-"}`);
 console.log(`  hosts naming CoinGecko / Exa             ${JSON.stringify(brandShare)}`);
+console.log(`W_d registrable domains / payTo (no line)  ${hostsByAddr.size ? (allDomains / hostsByAddr.size).toFixed(2) : "-"}  (${allDomains} domains)`);
+console.log(`platform candidates (N=5 unrelated domains) ${split.candidates} payTo, ${split.candidate_hosts} hosts set apart`);
+console.log(`W' without them (line 1.5)               ${split.W ?? "-"}  ${split.W === null ? "" : split.W >= 1.5 ? "OVER" : "NOT OVER"}  (${split.hosts} hosts, ${split.payTo} payTo); W_d' ${split.W_d}`);
+console.log(`  for reference only, N=3 / N=10           ${JSON.stringify([platformSplit(3), platformSplit(10)].map(({ N, candidates, W, W_d }) => ({ N, candidates, W, W_d })))}`);
 console.log(`hosts naming a brand not their own          ${R.size} (readable ${[...R.keys()].filter((h) => pays.has(h)).length})`);
 console.log(`  payTo matches the brand's own host       ${cnt("match")}`);
 console.log(`  payTo differs from the brand's own host  ${cnt("mismatch")}`);
