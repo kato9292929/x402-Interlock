@@ -63,3 +63,25 @@
 
 - 確認済みの組が 0 件なら、デモの形を作らずに止めて相談する。
 - 組はあっても、1か月あたりの差が照会の価格を下回るなら、採算が立たないことをそのまま報告する。
+
+## 結果（2026-10-08、ルールの固定後に実行）
+
+`node research/provenance-pairs.mjs <endpoint の checkout>`（endpoint@83e33d7）:
+
+- 対象にした記録: 31,490 / 131,675 件（USDC・per-call・14日以内に観測・ネットワークあり）。
+- 自社出品があるブランドは4つだけ: Birdeye 1、CoinGecko 1、Exa 1、QuickNode 1 件。
+- 名前を掲げた出品: CoinGecko 15、Exa 20、Birdeye 0、QuickNode 0 件。
+- 組の候補（同じ機能キー・ネットワークが重なる・自社が安い）: **4件、すべて Exa の検索**。
+
+| 自社出品 | 名前を掲げた出品 | 価格（USDC/回） |
+|---|---|---|
+| `api.exa.ai/search`（説明 "Search"） | `api.munition.io/v1/exa/search`（"Munition Exa Search"） | 0.007 / 0.01 |
+| 同上 | `netintel.dev/exa/search`（"Exa neural web search for AI agents"） | 0.007 / 0.01 |
+| 同上 | `netintel-production-440c.up.railway.app/exa/search`（同上） | 0.007 / 0.01 |
+| 同上 | `stableenrich.dev/api/exa/search`（"Exa Search - Neural search across the web"） | 0.007 / 0.01 |
+
+- 機能が違うため組に数えなかったもの: 14件。
+- 手による確認: 目録の説明では、5件とも Exa の検索と読める。**402 の応答の確認は未実施**（この環境から外部の API に接続できない）。
+  `research/check-402.sh` をオーナーの Mac で実行して確かめる。それまでは「確認済みの組」は 0 件として扱う。
+- 金額（確認できた場合）: 1回あたり 0.003 USDC、倍率 1.43、1か月（600回）で 1.80 USDC。
+- 補足: 自社で x402 を出しているブランドが4つしかない。名前を掲げた出品の大半には、x402 で直接買える上流がない。
