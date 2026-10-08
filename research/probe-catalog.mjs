@@ -70,7 +70,8 @@ async function proxyRefused(url) {
     const st = await (await fetch(`${proxy}/__agentproxy/status`, { signal: AbortSignal.timeout(5000) })).json();
     const u = new URL(url);
     const hp = `${u.hostname}:${u.port || (u.protocol === "https:" ? 443 : 80)}`;
-    return (st.recentRelayFailures ?? []).some((f) => f.kind === "connect_rejected" && f.host === hp);
+    // only a refusal (403 / 407) is ours; "answered 502" means the destination could not be reached
+    return (st.recentRelayFailures ?? []).some((f) => f.kind === "connect_rejected" && f.host === hp && /answered 40[37]/.test(f.detail ?? ""));
   } catch {
     return false;
   }
