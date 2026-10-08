@@ -146,12 +146,42 @@ export async function closeTask(task_id: string): Promise<Task> {
   const task = getTask(task_id);
   if (!task) throw new TaskError("unknown task", 404);
   if (task.status === "closed") throw new TaskError("task already closed", 409);
-  const { signature } = await allowanceChain().revoke(task.allowance.pubkey);
-  const snap = await allowanceChain()
+  const chain = allowanceChain();
+  // The Allowance may already be gone (revoked earlier, or never cleaned up in the ledger): the
+  // revoke would then fail with "Invalid account owner". Confirm on chain that there is no
+  // delegation left, and close the task in the ledger without a revoke (stage 8, section 4).
+  const gone = async () => {
+    const snap = await chain.read(task.allowance.pubkey);
+    return snap.exists ? undefined : snap;
+  };
+  const closeGone = (snap: AllowanceSnapshot, revoke_error?: string) => {
+    ledger().append(task_id, "task_closed", { task_id, revoke_tx: null, reason: "ALLOWANCE_ALREADY_GONE", allowance: task.allowance.pubkey, allowance_snapshot: snap, ...(revoke_error ? { revoke_error } : {}) });
+    return getTask(task_id)!;
+  };
+  const before = await gone();
+  if (before) return closeGone(before);
+  let signature: string;
+  try {
+    ({ signature } = await chain.revoke(task.allowance.pubkey));
+  } catch (e) {
+    const after = await gone().catch(() => undefined);
+    if (after) return closeGone(after, (e as Error).message);
+    throw e;
+  }
+  const snap = await chain
     .read(task.allowance.pubkey)
     .catch((e: Error) => ({ error: e.message }));
   ledger().append(task_id, "task_closed", { task_id, revoke_tx: signature, allowance: task.allowance.pubkey, allowance_snapshot: snap });
   return getTask(task_id)!;
+}
+
+/** The owner resumes a task stopped by TASK_CONSECUTIVE_FAILURES (stage 8). Recorded with the reason. */
+export function resumeTask(task_id: string, reason: string): Task {
+  const task = getTask(task_id);
+  if (!task) throw new TaskError("unknown task", 404);
+  if (!reason.trim()) throw new TaskError("give the reason", 400);
+  ledger().append(task_id, "task_resumed", { task_id, reason });
+  return task;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +205,9 @@ export type AllowanceReason =
   | "ALLOWANCE_REVOKED"
   | "ALLOWANCE_DELEGATE_MISMATCH"
   | "ALLOWANCE_EXPIRED"
-  | "ALLOWANCE_INSUFFICIENT";
+  | "ALLOWANCE_INSUFFICIENT"
+  // enough on chain, but not after what the task's other unfinished payments hold (stage 8)
+  | "BUDGET_RESERVED";
 
 /**
  * Steps 4-5, run immediately before every signature (never cached): read the Allowance
@@ -186,6 +218,8 @@ export async function checkAllowance(
   amountAtomic: bigint,
   ctx: { decision_id: string; phase: "evaluate" | "signing" },
   now = new Date(),
+  /** budget held by the task's other decided-but-unfinished payments (stage 8) */
+  reservedAtomic = 0n,
 ): Promise<{ ok: true; snapshot: AllowanceSnapshot } | { ok: false; reason: AllowanceReason; snapshot?: AllowanceSnapshot; error?: string }> {
   const chain = allowanceChain();
   let snapshot: AllowanceSnapshot;
@@ -203,10 +237,12 @@ export async function checkAllowance(
   else if (d.delegatee !== gate || d.delegatee !== task.allowance.delegate) reason = "ALLOWANCE_DELEGATE_MISMATCH";
   else if (d.expiry_ts !== "0" && BigInt(d.expiry_ts) <= BigInt(Math.floor(now.getTime() / 1000))) reason = "ALLOWANCE_EXPIRED";
   else if (BigInt(d.amount) < amountAtomic) reason = "ALLOWANCE_INSUFFICIENT";
+  else if (BigInt(d.amount) - reservedAtomic < amountAtomic) reason = "BUDGET_RESERVED";
   ledger().append(ctx.decision_id, "allowance_checked", {
     task_id: task.task_id,
     phase: ctx.phase,
     requested_atomic: amountAtomic.toString(),
+    reserved_by_others_atomic: reservedAtomic.toString(),
     ok: !reason,
     reason: reason ?? null,
     snapshot,

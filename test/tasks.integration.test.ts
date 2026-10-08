@@ -79,20 +79,28 @@ class FakeChain implements AllowanceChain {
     });
     return snapshotFromAccount(allowance, this.slot, { owner: SUBSCRIPTIONS_PROGRAM_ADDRESS, data_base64: getBase64Decoder().decode(bytes) });
   }
+  /** the chain answers a revoke of a missing account the way devnet did (2026-10-07) */
   async revoke(allowance: string) {
+    if (!this.accounts.has(allowance)) throw new Error("Invalid account owner");
     this.accounts.delete(allowance);
     this.revoked.push(allowance);
     return { signature: `revoke_${allowance.slice(0, 8)}` };
   }
   pullTimesOut = false;
+  /** the pull lands on chain but its confirmation does not arrive in time */
+  pullLandsButTimesOut = false;
+  /** the pull fails outright (nothing moves) */
+  pullFails = false;
   /** while set, a pull waits for it: a payment held in flight */
   pullGate: Promise<void> | undefined;
   async pull(allowance: string, amount: bigint) {
     if (this.pullGate) await this.pullGate;
     if (this.pullTimesOut) throw new SolanaSendTimeout("pull: no confirmation within 60000 ms; it may still land.");
+    if (this.pullFails) throw new Error("simulated pull failure");
     const a = this.accounts.get(allowance);
     if (!a || a.amount < amount) throw new Error("insufficient allowance");
     a.amount -= amount;
+    if (this.pullLandsButTimesOut) throw new SolanaSendTimeout("pull: no confirmation within 60000 ms; it may still land.");
     this.pulls.push({ allowance, amount });
     return { signature: `pull_${this.pulls.length}` };
   }
@@ -513,6 +521,77 @@ test("unknown outcome: held until the owner releases it with a reason; other tas
   const after = await buyAt(t.task_id, url);
   assert.ok(!after.reasons.includes("PREVIOUS_PAYMENT_UNCONFIRMED"));
   assert.equal(after.decision, "ASK_HUMAN");
+});
+
+// Stage 8: concurrency
+test("stage 8: two agents in one task at once cannot both spend the same remaining budget", async () => {
+  const t = await openTask("0.40"); // room for one 0.30 purchase
+  const paidBefore = paid.length;
+  const [a, b] = await Promise.all([buyAt(t.task_id, `${sellerUrl}/sol-clip?agentA=1`), buyAt(t.task_id, `${sellerUrl}/sol-clip?agentB=1`)]);
+  const statuses = [a, b].map((v) => v.status).sort();
+  assert.equal([a, b].filter((v) => v.status === "PAID").length, 1, statuses.join(","));
+  const loser = a.status === "PAID" ? b : a;
+  assert.ok(["BUDGET_RESERVED", "ALLOWANCE_INSUFFICIENT"].includes(loser.reasons[0]), loser.reasons.join(","));
+  assert.equal(paid.length, paidBefore + 1);
+});
+
+test("stage 8: a payment with an unknown outcome stops the whole task; reconcile settles it from the chain", async () => {
+  const { reconcileUnconfirmed } = await import("../lib/reconcile");
+  // Landed: the pull moved the money but its confirmation timed out.
+  const t = await openTask("1.00");
+  chain.pullLandsButTimesOut = true;
+  let first;
+  try {
+    first = await buyAt(t.task_id, `${sellerUrl}/sol-clip?landed=1`);
+  } finally {
+    chain.pullLandsButTimesOut = false;
+  }
+  assert.equal(first.status, "PAYMENT_FAILED");
+  const other = await buyAt(t.task_id, `${sellerUrl}/sol-clip?other=1`);
+  assert.deepEqual(other.reasons, ["TASK_PAYMENT_UNCONFIRMED"]);
+  // Too soon to call it "not landed"? It did land, so the amounts already say so.
+  const rows = (await reconcileUnconfirmed({ now: Date.now() + 3 * 60_000 })).filter((r) => r.task_id === t.task_id);
+  assert.deepEqual(rows.map((r) => r.outcome), ["PULL_LANDED"]);
+  assert.match(rows[0].detail, /gate's token account; the seller was not paid/);
+  assert.equal((await buyAt(t.task_id, `${sellerUrl}/sol-clip?after=1`)).status, "PAID"); // the task runs again
+
+  // Not landed: nothing moved. Fresh: unclear; after the blockhash window: released.
+  const u = await openTask("1.00");
+  chain.pullTimesOut = true;
+  try {
+    assert.equal((await buyAt(u.task_id, `${sellerUrl}/sol-clip?lost=1`)).status, "PAYMENT_FAILED");
+  } finally {
+    chain.pullTimesOut = false;
+  }
+  assert.deepEqual((await reconcileUnconfirmed({ dryRun: true })).filter((r) => r.task_id === u.task_id).map((r) => r.outcome), ["UNCLEAR"]);
+  assert.deepEqual((await reconcileUnconfirmed({ now: Date.now() + 3 * 60_000 })).filter((r) => r.task_id === u.task_id).map((r) => r.outcome), ["PULL_NOT_LANDED"]);
+  assert.equal((await buyAt(u.task_id, `${sellerUrl}/sol-clip?lost=1`)).status, "PAID");
+});
+
+test("stage 8: payment failures in a row stop the task until the owner resumes it", async () => {
+  const { resumeTask } = await tasks();
+  const t = await openTask("1.00");
+  chain.pullFails = true;
+  try {
+    for (let i = 0; i < 3; i++) assert.equal((await buyAt(t.task_id, `${sellerUrl}/sol-clip?fail=${i}`)).status, "PAYMENT_FAILED");
+    assert.deepEqual((await buyAt(t.task_id, `${sellerUrl}/sol-clip?fail=3`)).reasons, ["TASK_CONSECUTIVE_FAILURES"]);
+  } finally {
+    chain.pullFails = false;
+  }
+  assert.throws(() => resumeTask(t.task_id, " "), /reason/);
+  resumeTask(t.task_id, "pull failures were a test switch");
+  assert.equal((await buyAt(t.task_id, `${sellerUrl}/sol-clip?fail=4`)).status, "PAID");
+});
+
+test("stage 8: closing a task whose Allowance is already gone closes it in the ledger (ALLOWANCE_ALREADY_GONE)", async () => {
+  const { closeTask } = await tasks();
+  const t = await openTask("1.00");
+  await chain.revoke(t.allowance.pubkey); // revoked outside the gate
+  const closed = await closeTask(t.task_id);
+  assert.equal(closed.status, "closed");
+  const ev = new Ledger().byDecision(t.task_id).find((e) => e.event_type === "task_closed")!;
+  assert.equal(ev.data.reason, "ALLOWANCE_ALREADY_GONE");
+  assert.equal(ev.data.revoke_tx, null);
 });
 
 test("budget used up: stops with ALLOWANCE_INSUFFICIENT (0.30 x 3 of 1.00, 4th blocked)", async () => {

@@ -32,5 +32,6 @@
         "mainnet": "env:SELLER_MAINNET_ADDRESS"
       }
     ]
-  }
+  },
+  "max_consecutive_failures": 3
 }

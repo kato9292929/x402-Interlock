@@ -21,6 +21,7 @@ import { deliver, isChannel, type Channel } from "./inbox";
 import { detectDisclosure, type Detection } from "./protect";
 import { loadThresholds, spendGuardShadow, type SpendGuardReview } from "./appe";
 import { deliveryHistory, deliveryHistoryReasons } from "./delivery-history";
+import { budgetReservedAtomic, consecutiveFailures, OUTCOME_UNKNOWN, unconfirmedInTask } from "./task-guard";
 import { bodySha256, deliveryReview, type DeliveryReview, type Requirements } from "./delivery";
 import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
@@ -149,7 +150,7 @@ function runContext(all: LedgerEvent[], run_id: string, resource: string, now: D
 // Fail closed: a server that stops mid-payment leaves the reservation held.
 
 /** Outcomes after which money may have moved without the gate knowing: the reservation stays. */
-const OUTCOME_UNKNOWN = new Set(["ALLOWANCE_PULL_UNCONFIRMED", "SELLER_NO_RESPONSE"]);
+// OUTCOME_UNKNOWN: lib/task-guard.ts
 
 export interface HeldPurchase {
   decision_id: string;
@@ -162,7 +163,7 @@ export function heldPurchase(all: LedgerEvent[], run_id: string, resource: strin
   for (const r of all) {
     if (r.event_type !== "payment_reserved" || r.data.run_id !== run_id || r.data.resource !== resource) continue;
     const own = all.filter((e) => e.decision_id === r.decision_id);
-    if (own.some((e) => e.event_type === "payment_reservation_released")) continue;
+    if (own.some((e) => e.event_type === "payment_reservation_released" || e.event_type === "payment_reconciled")) continue;
     const result = own.filter((e) => e.event_type === "payment_result").at(-1);
     if (!result) return { decision_id: r.decision_id, state: "IN_FLIGHT" };
     if (result.data.status === "PAYMENT_FAILED" && OUTCOME_UNKNOWN.has(String(result.data.reason))) {
@@ -182,6 +183,36 @@ export function paidSinceDecision(all: LedgerEvent[], decision_id: string, run_i
   return all
     .slice(decided + 1)
     .find((e) => e.event_type === "payment_result" && e.data.status === "PAID" && e.data.run_id === run_id && e.data.resource === resource && e.decision_id !== decision_id)?.decision_id;
+}
+
+/**
+ * Check and reserve one purchase atomically (under the ledger lock, so across processes too):
+ * "running" if this decision already reserved or has a result, "refused" (with a NOT_EXECUTED
+ * result written) if the same purchase is held or was paid since this decision began, undefined
+ * when the reservation was made.
+ */
+export function tryReservePurchase(
+  l: Ledger,
+  decision_id: string,
+  p: { task_id: string | null; run_id: string; url: string; amount: string },
+): "running" | "refused" | undefined {
+  return l.locked(() => {
+    const ledgerNow = l.readAll();
+    if (paidOrAttempted(ledgerNow.filter((e) => e.decision_id === decision_id))) return "running";
+    const held = heldPurchase(ledgerNow, p.run_id, p.url);
+    if (held?.decision_id === decision_id) return "running"; // this payment is already running
+    if (held) {
+      l.append(decision_id, "payment_result", { task_id: p.task_id, status: "NOT_EXECUTED", run_id: p.run_id, resource: p.url, reason: heldReason(held), held_by: held.decision_id, phase: "reserve" });
+      return "refused";
+    }
+    const since = paidSinceDecision(ledgerNow, decision_id, p.run_id, p.url);
+    if (since) {
+      l.append(decision_id, "payment_result", { task_id: p.task_id, status: "NOT_EXECUTED", run_id: p.run_id, resource: p.url, reason: "PURCHASED_SINCE_DECISION", held_by: since, phase: "reserve" });
+      return "refused";
+    }
+    l.append(decision_id, "payment_reserved", { task_id: p.task_id, run_id: p.run_id, resource: p.url, amount: p.amount });
+    return undefined;
+  });
 }
 
 const heldReason = (h: HeldPurchase): ReasonCode => (h.state === "IN_FLIGHT" ? "PURCHASE_IN_FLIGHT" : "PREVIOUS_PAYMENT_UNCONFIRMED");
@@ -270,8 +301,26 @@ export async function evaluate(input: {
     if (t.reason) return blockEarly(t.reason);
     if (!onSolana) return blockEarly("TASK_REQUIRES_SOLANA");
     if (actionPolicy === "deny") return blockEarly("ACTION_DENIED", { action_type: "pay", action_policy: actionPolicy });
-    const a = await checkAllowance(t.task!, BigInt(target.amount), { decision_id, phase: "evaluate" }, now);
+    // Stop conditions (stage 8): a payment in this task with an unknown outcome, or too many
+    // payment failures in a row. The owner resolves the first (task -- reconcile / release) and
+    // resumes after the second (task -- resume).
+    const before = l.readAll();
+    const unknown = unconfirmedInTask(before, t.task!.task_id);
+    if (unknown.length) return blockEarly("TASK_PAYMENT_UNCONFIRMED", { held_by: unknown });
+    const failures = consecutiveFailures(before, t.task!.task_id);
+    if (failures >= (policy.max_consecutive_failures ?? 3)) return blockEarly("TASK_CONSECUTIVE_FAILURES", { failures });
+    const amount = BigInt(target.amount);
+    const a = await checkAllowance(t.task!, amount, { decision_id, phase: "evaluate" }, now, budgetReservedAtomic(l.readAll(), t.task!.task_id, decision_id));
     if (!a.ok) return blockEarly(a.reason);
+    // Reserve the budget (stage 8): check what the others hold now and record this one, under
+    // the ledger lock, so two agents in one task cannot both pass on the same remaining budget.
+    const remaining = BigInt(a.snapshot.decoded!.amount);
+    const refused = l.locked(() => {
+      if (remaining - budgetReservedAtomic(l.readAll(), t.task!.task_id, decision_id) < amount) return blockEarly("BUDGET_RESERVED");
+      l.append(decision_id, "budget_reserved", { task_id: t.task!.task_id, amount: amount.toString() });
+      return undefined;
+    });
+    if (refused) return refused;
     task = t.task;
   }
 
@@ -528,19 +577,9 @@ async function execute(decision_id: string): Promise<GateView> {
   // Reserve before anything can move money. Check and reserve run with no await in between, so
   // two requests in this process cannot both pass (a payment approved by the owner after
   // waiting comes through here too).
-  const ledgerNow = l.readAll();
-  const held = heldPurchase(ledgerNow, p.run_id, p.url);
-  if (held?.decision_id === decision_id) return view(decision_id); // this payment is already running
-  if (held) {
-    l.append(decision_id, "payment_result", { task_id, status: "NOT_EXECUTED", run_id: p.run_id, resource: p.url, reason: heldReason(held), held_by: held.decision_id, phase: "reserve" });
-    return view(decision_id);
-  }
-  const since = paidSinceDecision(ledgerNow, decision_id, p.run_id, p.url);
-  if (since) {
-    l.append(decision_id, "payment_result", { task_id, status: "NOT_EXECUTED", run_id: p.run_id, resource: p.url, reason: "PURCHASED_SINCE_DECISION", held_by: since, phase: "reserve" });
-    return view(decision_id);
-  }
-  l.append(decision_id, "payment_reserved", { task_id, run_id: p.run_id, resource: p.url, amount: p.selected.amount });
+  // Under the ledger lock, so this holds across processes sharing the ledger too (stage 8).
+  const stop = tryReservePurchase(l, decision_id, { task_id, run_id: p.run_id, url: p.url, amount: p.selected.amount });
+  if (stop) return view(decision_id);
 
   // Re-check the task and read the Allowance again immediately before signing. Nothing from
   // evaluate() is reused: an owner may have closed the task, or other payments may have used
@@ -554,7 +593,7 @@ async function execute(decision_id: string): Promise<GateView> {
     const t = checkTask(p.task_id);
     if (t.reason) return notExecuted(t.reason);
     const amount = BigInt(p.selected.amount);
-    const a = await checkAllowance(t.task!, amount, { decision_id, phase: "signing" });
+    const a = await checkAllowance(t.task!, amount, { decision_id, phase: "signing" }, new Date(), budgetReservedAtomic(l.readAll(), t.task!.task_id, decision_id));
     if (!a.ok) return notExecuted(a.reason);
     try {
       // Pull exactly this payment's amount under the Allowance into the gate's account,

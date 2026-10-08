@@ -39,6 +39,10 @@ export type ReasonCode =
   | "ALLOWANCE_DELEGATE_MISMATCH"
   | "ALLOWANCE_EXPIRED"
   | "ALLOWANCE_INSUFFICIENT"
+  | "BUDGET_RESERVED"
+  // a task stops (stage 8): a payment's outcome is unknown, or payments failed N times in a row
+  | "TASK_PAYMENT_UNCONFIRMED"
+  | "TASK_CONSECUTIVE_FAILURES"
   // action policy (lib/actions.ts)
   | "ACTION_ALLOW"
   | "ACTION_NOTIFY"
@@ -57,6 +61,8 @@ export interface Policy {
   max_amount_per_run: string;
   ask_human_above: string;
   repurchase_window_minutes: number;
+  /** a task stops taking payments after this many payment failures in a row (default 3) */
+  max_consecutive_failures?: number;
   screening?: { targets: ScreeningTarget[] };
 }
 
