@@ -20,6 +20,7 @@ import { isActionType, loadActionPolicies, type ActionPolicy, type ActionType } 
 import { deliver, isChannel, type Channel } from "./inbox";
 import { detectDisclosure, type Detection } from "./protect";
 import { loadThresholds, spendGuardShadow, type SpendGuardReview } from "./appe";
+import { deliveryHistory, deliveryHistoryReasons } from "./delivery-history";
 import { bodySha256, deliveryReview, type DeliveryReview, type Requirements } from "./delivery";
 import { screen, type ScreeningReport } from "./screening";
 import { screeningFromAddress, signApproved } from "./signer";
@@ -307,6 +308,24 @@ export async function evaluate(input: {
   }
   for (const s of report.skipped ?? []) result.reasons.push(s.code);
 
+  // Earlier deliveries of the same target (stage 6, code rules): a target that recently returned
+  // nothing, or failed the code checks, goes to the owner instead of being paid automatically.
+  let deliveryHist: ReturnType<typeof deliveryHistory> | undefined;
+  if (task_id !== undefined && result.decision !== "BLOCK") {
+    let rule = { window: 3, poor_at: 2, mismatch_at: 2 };
+    try {
+      rule = loadThresholds().delivery_review.history ?? rule;
+    } catch {
+      /* the defaults: the stricter reading of a config that cannot be read */
+    }
+    deliveryHist = deliveryHistory(l.readAll(), input.url, rule.window);
+    const hist = deliveryHistoryReasons(deliveryHist, rule);
+    if (hist.length) {
+      for (const r of hist) if (!result.reasons.includes(r)) result.reasons.push(r);
+      if (result.decision === "PAY" || result.decision === "CAP") result.decision = "ASK_HUMAN";
+    }
+  }
+
   // Spend Guard in confirm mode (spec/07 section 3-5, spec/08). Applied after every fixed rule,
   // and only one way: a purchase it would block or ask about, or could not judge, goes to the
   // owner (PAY/CAP -> ASK_HUMAN). It never blocks, and a BLOCK stays a BLOCK.
@@ -338,6 +357,7 @@ export async function evaluate(input: {
     action_policy: actionPolicy,
     notify,
     policy,
+    ...(deliveryHist?.count ? { delivery_history: { target: deliveryHist.target, reviews: deliveryHist.count, recent: deliveryHist.recent } } : {}),
   });
   savePending(decision_id, { kind: "pay", task_id, paymentRequired, url: input.url, run_id, purpose: input.purpose, requirements: input.requirements, result, selected });
   const sg = sgReview ? recordSpendGuard(decision_id, task!.task_id, input.url, target.amount, result.decision, sgReview, sgAsked) : undefined;

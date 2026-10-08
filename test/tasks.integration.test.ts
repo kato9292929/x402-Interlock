@@ -958,6 +958,43 @@ test("delivery: an empty array is judged empty, and the payment stays paid", asy
   assert.equal(after.find((e) => e.event_type === "payment_result")!.data.status, "PAID");
 });
 
+test("stage 6: a target whose recent deliveries were empty goes to the owner; another target is unaffected", async () => {
+  await freshJev();
+  const t = await openFor("Weekly streaming report for the artist");
+  const paidBefore = paid.length;
+  let asked: Awaited<ReturnType<typeof buyStats>> | undefined;
+  let bought = 0;
+  for (let i = 0; i < 3 && !asked; i++) {
+    const v = await buyStats(t.task_id, "sol-stats-empty");
+    if (v.status === "PAID") bought++;
+    else asked = v;
+  }
+  assert.ok(asked, "never asked after 3 empty deliveries");
+  assert.equal(asked!.decision, "ASK_HUMAN");
+  assert.ok(asked!.reasons.includes("DELIVERY_HISTORY_POOR") && asked!.reasons.includes("DELIVERY_HISTORY_MISMATCH"), asked!.reasons.join(","));
+  assert.equal(paid.length, paidBefore + bought); // the asked one was not paid
+  const d = new Ledger().byDecision(asked!.decision_id).find((e) => e.event_type === "gate_decision")!.data.delivery_history as { reviews: number; recent: { empty: boolean }[] };
+  assert.ok(d.recent.filter((r) => r.empty).length >= 2);
+  // What the judge saw: the candidate's delivery history, as context.
+  const st = spendGuardStates.at(-1)! as unknown as { candidate: { delivery_history: { reviews: number; fields_ok_rate: number } | null } };
+  assert.ok(st.candidate.delivery_history && st.candidate.delivery_history.reviews >= 2 && st.candidate.delivery_history.fields_ok_rate === 0);
+  // A target with good deliveries in the same task is paid as usual.
+  assert.equal((await buyStats(t.task_id, "sol-stats")).status, "PAID");
+});
+
+test("stage 6 rules: empty and mismatch over the latest 3 reviews; the model's 'dummy' is not used", async () => {
+  const { deliveryHistory, deliveryHistoryReasons } = await import("../lib/delivery-history");
+  let n = 0;
+  const ev = (fields_ok: boolean, item_count: number | null, status_ok = true, substance = "real_data") =>
+    ({ event_id: String(++n), decision_id: `d${n}`, event_type: "delivery_review", occurred_at: new Date(n * 1000).toISOString(), data: { url: `https://s/x?n=${n}`, fields_ok, fields: { status_ok, item_count }, substance, fulfillment_score: 5 }, previous_event_hash: null, event_hash: "" }) as never;
+  const h = (...evs: never[]) => deliveryHistoryReasons(deliveryHistory(evs, "https://s/x?n=99"));
+  assert.deepEqual(h(ev(false, 0), ev(false, 0)), ["DELIVERY_HISTORY_POOR", "DELIVERY_HISTORY_MISMATCH"]);
+  assert.deepEqual(h(ev(false, 3), ev(false, 3), ev(true, 3)), ["DELIVERY_HISTORY_MISMATCH"]); // wrong fields, not empty
+  assert.deepEqual(h(ev(false, 0), ev(true, 5), ev(true, 5), ev(true, 5)), []); // only the latest 3 count
+  assert.deepEqual(h(ev(true, 5, true, "dummy_or_fixed"), ev(true, 5, true, "dummy_or_fixed")), []); // model's verdict alone: no rule
+  assert.deepEqual(h(ev(false, null, false), ev(false, null, false)), ["DELIVERY_HISTORY_POOR", "DELIVERY_HISTORY_MISMATCH"]); // HTTP errors
+});
+
 test("delivery: the wrong period and missing fields are caught by code (fields_ok)", async () => {
   await freshJev();
   const t = await openFor("Weekly streaming report for the artist");

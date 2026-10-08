@@ -23,6 +23,9 @@ export type ReasonCode =
   | "SPEND_GUARD_UNNECESSARY"
   | "SPEND_GUARD_DUPLICATE"
   | "SPEND_GUARD_UNAVAILABLE"
+  // earlier deliveries of the same target (stage 6): code rules, owner asked
+  | "DELIVERY_HISTORY_POOR"
+  | "DELIVERY_HISTORY_MISMATCH"
   | "WITHIN_POLICY"
   // a screening check that does not apply was not run (informational; lib/screening.ts)
   | "SCAN_MESSAGE_NOT_APPLICABLE_SOLANA"
