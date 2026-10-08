@@ -23,6 +23,8 @@
     "appe-metrics": "tsx --env-file-if-exists=.env.local scripts/appe-metrics.ts",
     "spend-guard-confirm-run": "tsx --env-file-if-exists=.env.local scripts/spend-guard-confirm-run.ts",
     "appe-keyword-baseline": "tsx --env-file-if-exists=.env.local scripts/appe-keyword-baseline.ts",
+    "research:delivery-uplift": "tsx --env-file-if-exists=.env.local research/delivery-uplift.ts",
+    "research:router-eval": "tsx --env-file-if-exists=.env.local research/router-eval.ts",
     "appe-compare": "tsx --env-file-if-exists=.env.local scripts/appe-compare.ts"
   },
   "dependencies": {
