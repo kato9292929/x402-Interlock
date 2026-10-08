@@ -86,6 +86,7 @@ for (const x of pairs) {
   else if (x.result === "match" || cur === "match") hostResult.set(x.host, "match");
   else hostResult.set(x.host, "unmatchable");
 }
+if (process.env.PAIRS) for (const x of pairs.filter((p) => p.result !== "unmatchable")) console.error(`pair ${x.result} ${x.brand} ${x.host}`);
 const cnt = (v) => [...hostResult.values()].filter((x) => x === v).length;
 
 // same host, several endpoints (first 200 hosts): one payTo or several?
