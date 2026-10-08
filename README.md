@@ -1,31 +1,69 @@
 # x402 Interlock
 
-**A gate that sits right before an agent signs an x402 payment. It screens the payment with Intercepta, applies fixed spending rules, and, when the rules require it, asks the agent's owner to approve with World ID before anything is signed.**
+**An AI agent never gets a key. For each task it gets a Solana Allowance with a budget and an
+expiry, delegated to a gate. When something looks wrong, the gate asks the owner, who approves
+with World ID.**
 
-ETHGlobal Tokyo 2026 · Building from Scratch track · Partner tracks: Intercepta (Safe Agent-to-Agent Payments with x402), World (Best Use of World ID for Agents)
+Colosseum Crypto World's Fair · Solana devnet · 3-minute demo: [link to add] · [submission notes](docs/SUBMISSION-colosseum.md)
 
 ```text
-agent ── GET /api/seller/report ──▶ seller        402 + PAYMENT-REQUIRED
-agent ── POST /api/gate/evaluate {url, purpose} ──▶ x402 Interlock (server)
-          1. re-fetch the 402 itself (the agent's copy is not trusted)
-          2. Intercepta: payTo (Quick/Deep Scan Address), token (Scan Token),
-             the EIP-3009 authorization message (Scan Message)
-          3. fixed rules from config/policy.json
-          4. decision: PAY | CAP | ASK_HUMAN | BLOCK
-          5. ASK_HUMAN → World ID proof_of_human, verified server-side
-             approve → sign + pay · reject / expire / cancel → never signed
-          6. every step appended to data/ledger.jsonl (hash chain)
+owner ── opens a task: "make one music video, 1.00 USDC, until tomorrow"
+          └─▶ Solana Allowance (Subscriptions program, Fixed delegation)
+              delegator = owner · delegatee = the gate's key · amount = budget · expiry = deadline
+
+agent ── "pay for this" / "send this message" ──▶ x402 Interlock (the gate)
+          1. task open? Allowance live, not expired, enough left?  (read from chain each time)
+          2. same purchase already running or unconfirmed? → refuse (no double payment)
+          3. payee screened (Intercepta), fixed limits
+          4. outgoing message: does it contain the owner's address, phone, email? → hold
+          5. owner asked when needed: World ID approval bound to the exact payment or text
+          6. the gate pulls exactly that amount under the Allowance and pays via x402
+agent holds no key, so there is no way around the gate. Closing the task revokes the Allowance.
 ```
 
-The agent never holds a wallet key. The buyer key lives only on the Interlock server
-([`lib/signer.ts`](lib/signer.ts)), and it signs exactly the payment requirement that the gate
-approved, nothing else. An agent cannot sign around the gate, and a browser cannot approve a
-payment by reporting "approved".
+### What it stops, on devnet
+
+| Scene | What happens | Evidence |
+|---|---|---|
+| Budget | 3 payments of 0.30 under a 1.00 task go through; the 4th stops: `BLOCK ALLOWANCE_INSUFFICIENT`, read from the chain's remaining balance | Allowance [HvBKR2s8…](https://explorer.solana.com/address/HvBKR2s8xrKh26AMNpDswCTAcrndmzqektWLqY4LP5JH?cluster=devnet), payment [hwV1op5x…](https://explorer.solana.com/tx/hwV1op5xkFtYJ5Fu6nQVq4KAfAKkDL29oxio26c3STd7MHW9uqHUxMhV6WyFCDRrUV81TWzKcsQuCNQ3Jtc17NQ?cluster=devnet) (2026-10-01) |
+| A message with the owner's address | The agent sends "the owner will meet you at 神宮前1丁目2番3号" and declares nothing. The gate finds the registered address in the text (`CONTENT_PROTECTED_MATCH`), holds it, the owner rejects, the venue never receives it. It cost nothing, so no budget would have seen it. | 2026-10-02, task `task_9642ffbb…` |
+| Closing the task | The owner closes the task: the Allowance is revoked on chain, and the next payment stops before anything else: `BLOCK TASK_NOT_ACTIVE` | revoke [2W3jCSWi…](https://explorer.solana.com/tx/2W3jCSWiE3VmskK368EYXcbW1mH1aHPdkZNUXbEYAxFwdaYHDLjFTazhwjF14iS7MXP7A7YgD3KGzqJVBckceY5t?cluster=devnet) (2026-10-02) |
+
+Also in the gate, from failures seen while building it: a payment that hung was retried and paid
+twice (2026-10-05); a purchase is now reserved before money moves and a second one for the same
+thing is refused while the first is running or its outcome is unknown (covered by tests; not yet
+run on devnet).
+
+### How we decided whether to use an AI judge
+
+We built a judge-model check ("is this purchase needed for the task?", TypeSafe Jev) and then
+measured whether it was worth keeping, on our own data rather than benchmarks: 48 purchases on
+devnet across 6 made-up tasks, labelled by the owner, compared with keyword rules that use no model.
+
+| Method | Not-needed purchases caught | Needed purchases flagged |
+|---|---|---|
+| Keyword: task purpose vs item name + seller description | 13 / 22 (59%) | 0 |
+| Keyword: task purpose vs item name only | 20 / 22 (91%) | 11 |
+| Judge model (Jev) | 20 / 21 (95%) | 0 |
+
+Clearly unrelated purchases (a weather forecast for a music video) are caught by keywords alone.
+The model added 8 catches, all subjective ones: out of scope, more than asked, free elsewhere. The
+scenarios were written by us, the keyword rule was written after we had seen the items, and how
+often real agents make unneeded purchases has not been measured. So the judge is **off**; it stays
+as a removable part. Details: [`spec/08`](spec/08-stage4-review-and-validation-order.md).
+
+### What is not there yet
+
+- **No users, and nobody has said they would pay for it.** Demand is not validated.
+- Devnet only, run on one machine; no hosted deployment.
+- The payment layer overlaps with Circle, Coinbase and Privy; what this adds is the per-task
+  Allowance delegated to a gate, the check of outgoing messages, and approval bound to the content.
+- Full list of what was checked live, only in tests, or not at all: [Status in three lists](#status-in-three-lists-2026-10-07).
 
 ## Colosseum build: per-task budgets on Solana and the action gate
 
 > Built for Colosseum "Crypto World's Fair" (brief: [`spec/06-tasks-and-action-gate.md`](spec/06-tasks-and-action-gate.md)).
-> The ETHGlobal flow above (Base Sepolia, no task) is unchanged and still works.
+> The ETHGlobal flow (Base Sepolia, no task) is unchanged and still works: see "Earlier build" below.
 
 **A task is the unit of budget, and a task is a Solana Allowance.** When the owner opens a task
 ("make one music video, 1.00 USDC, until tomorrow"), Interlock creates one Fixed delegation in the
@@ -410,6 +448,29 @@ block it, while the unrelated purchase gets 0.02. "Necessary" seems to be read s
 done without it"). Neither the thresholds nor the question are changed yet: that is what the
 section 4 check (≥ 30 purchases judged by the owner) is for. Candidates to compare there: a lower
 necessity threshold, or nature as the primary signal, or a question that asks "needed or useful".
+
+## Earlier build: ETHGlobal Tokyo 2026 (Base Sepolia, no task)
+
+The project started at ETHGlobal Tokyo 2026 (Building from Scratch; partner tracks Intercepta and
+World). That flow is unchanged and still works:
+
+```text
+agent ── GET /api/seller/report ──▶ seller        402 + PAYMENT-REQUIRED
+agent ── POST /api/gate/evaluate {url, purpose} ──▶ x402 Interlock (server)
+          1. re-fetch the 402 itself (the agent's copy is not trusted)
+          2. Intercepta: payTo (Quick/Deep Scan Address), token (Scan Token),
+             the EIP-3009 authorization message (Scan Message)
+          3. fixed rules from config/policy.json
+          4. decision: PAY | CAP | ASK_HUMAN | BLOCK
+          5. ASK_HUMAN → World ID proof_of_human, verified server-side
+             approve → sign + pay · reject / expire / cancel → never signed
+          6. every step appended to data/ledger.jsonl (hash chain)
+```
+
+The agent never holds a wallet key. The buyer key lives only on the Interlock server
+([`lib/signer.ts`](lib/signer.ts)), and it signs exactly the payment requirement that the gate
+approved, nothing else. An agent cannot sign around the gate, and a browser cannot approve a
+payment by reporting "approved".
 
 ## Where the partner APIs are called
 
