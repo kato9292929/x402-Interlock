@@ -1,7 +1,7 @@
 // spec/10 section 3-2: ask every eligible catalog host for its 402 without paying, under the
 // rules fixed in 1cf51e2 (X, Y, Z). Appends one line per probed endpoint to
 // data/payto-observations.jsonl. No payment header is ever sent.
-// Usage: NODE_USE_ENV_PROXY=1 node research/probe-catalog.mjs <endpoint checkout> [--out file] [--limit N] [--only-url-prefix p]
+// Usage: NODE_USE_ENV_PROXY=1 node research/probe-catalog.mjs <endpoint checkout> [--network Solana] [--out file] [--limit N] [--only-url-prefix p]
 import { appendFileSync, readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import path from "node:path";
@@ -13,11 +13,12 @@ const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
 const OUT = opt("--out", "data/payto-observations.jsonl");
 const LIMIT = Number(opt("--limit", "0")) || Infinity;
 const ONLY = opt("--only-url-prefix", null); // for the local stub test only
+const NET = opt("--network", null); // spec/10 revision 2: "Solana" limits the universe to records listing it
 
 const { hostOf } = await import(pathToFileURL(path.join(repo, "scripts/brands.mjs")).href);
 const data = JSON.parse(gunzipSync(readFileSync(path.join(repo, "data/endpoints_full.json.gz"))).toString("utf8"));
 const gen = Date.parse(data.generated_at);
-const eligible = data.endpoints.filter((r) => r.price && r.price.currency === "USDC" && r.price.unit === "per-call" && r.price.amount > 0 && gen - Date.parse(r.last_seen) <= 14 * 86400_000 && (r.networks ?? []).length && (!ONLY || r.url.startsWith(ONLY)));
+const eligible = data.endpoints.filter((r) => r.price && r.price.currency === "USDC" && r.price.unit === "per-call" && r.price.amount > 0 && gen - Date.parse(r.last_seen) <= 14 * 86400_000 && (r.networks ?? []).length && (!ONLY || r.url.startsWith(ONLY)) && (!NET || r.networks.includes(NET)));
 const seed = readFileSync(path.join(repo, "data/seed/x402-inc.json"), "utf8");
 const ownHosts = new Set(JSON.parse(seed).map((r) => hostOf(r.url)));
 const own = (h) => ownHosts.has(h) || h === "x402jp.com" || h.endsWith(".x402jp.com");

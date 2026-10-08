@@ -7,11 +7,15 @@ import { gunzipSync } from "node:zlib";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [repo, obsFile = "data/payto-observations.jsonl"] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const NET = argv.includes("--network") ? argv.splice(argv.indexOf("--network"), 2)[1] : null; // spec/10 revision 2: "Solana"
+const [repo, obsFile = "data/payto-observations.jsonl"] = argv;
+// with --network, only accepts entries on that network count (X, W, Y); other entries stay in the raw data
+const onNet = (a) => !NET || a.network_norm === NET.toLowerCase();
 const { BRANDS, hostOf, firstPartyBrand, borrowedBrand } = await import(pathToFileURL(path.join(repo, "scripts/brands.mjs")).href);
 const data = JSON.parse(gunzipSync(readFileSync(path.join(repo, "data/endpoints_full.json.gz"))).toString("utf8"));
 const gen = Date.parse(data.generated_at);
-const eligible = data.endpoints.filter((r) => r.price && r.price.currency === "USDC" && r.price.unit === "per-call" && r.price.amount > 0 && gen - Date.parse(r.last_seen) <= 14 * 86400_000 && (r.networks ?? []).length);
+const eligible = data.endpoints.filter((r) => r.price && r.price.currency === "USDC" && r.price.unit === "per-call" && r.price.amount > 0 && gen - Date.parse(r.last_seen) <= 14 * 86400_000 && (r.networks ?? []).length && (!NET || r.networks.includes(NET)));
 const DENOM = new Set(eligible.map((r) => hostOf(r.url)).filter(Boolean)).size;
 
 // brands per host, as in spec/09 (adf7b29) but per host: F = own host of B, R = host naming B
@@ -47,11 +51,11 @@ const failures = new Map(); // host -> failure of its last row
 const own = new Map();
 for (const r of rows) {
   own.set(r.host, r.own);
-  const ok = r.status === 402 && r.accepts.filter((a) => a.payTo && a.amount && a.network);
+  const ok = r.status === 402 && r.accepts.filter((a) => a.payTo && a.amount && a.network && onNet(a));
   if (ok && ok.length) {
     if (!pays.has(r.host)) pays.set(r.host, new Set());
     for (const a of ok) pays.get(r.host).add(`${a.network_norm}|${addr(a)}`);
-  } else failures.set(r.host, r.failure);
+  } else failures.set(r.host, r.failure ?? "no_entry_on_network"); // a 402 that names only other networks
 }
 const probed = new Set(rows.map((r) => r.host));
 const readable = [...pays.keys()];
@@ -89,7 +93,7 @@ const multi = new Map();
 for (const r of rows) {
   if (r.status !== 402) continue;
   if (!multi.has(r.host)) multi.set(r.host, []);
-  multi.get(r.host).push(new Set(r.accepts.filter((a) => a.payTo).map((a) => `${a.network_norm}|${addr(a)}`)));
+  multi.get(r.host).push(new Set(r.accepts.filter((a) => a.payTo && onNet(a)).map((a) => `${a.network_norm}|${addr(a)}`)));
 }
 let same = 0;
 let differ = 0;
