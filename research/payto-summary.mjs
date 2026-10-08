@@ -105,6 +105,29 @@ const byPay = new Map();
 for (const [h, ks] of pays) for (const k of ks) byPay.set(k, (byPay.get(k) ?? new Set()).add(h));
 const shared = [...byPay.values()].filter((s) => s.size >= 2);
 
+// W (spec/10, c856aae): readable hosts / distinct payTo. An EVM address on several EVM networks
+// is one address; per network, hosts with a payTo on it / distinct payTo on it.
+const isEvm = (k) => /^0x[0-9a-f]{40}$/i.test(k.split("|")[1]);
+const addrKey = (k) => (isEvm(k) ? `evm|${k.split("|")[1]}` : k);
+const hostsByAddr = new Map();
+for (const [h, ks] of pays) for (const k of new Set([...ks].map(addrKey))) hostsByAddr.set(k, (hostsByAddr.get(k) ?? new Set()).add(h));
+const W = readable.length && hostsByAddr.size ? readable.length / hostsByAddr.size : null;
+const perNet = {};
+for (const n of ["base", "solana", "other"]) {
+  const inNet = (k) => (n === "other" ? !k.startsWith("base|") && !k.startsWith("solana|") : k.startsWith(`${n}|`));
+  const hs = readable.filter((h) => [...pays.get(h)].some(inNet));
+  const as = new Set(readable.flatMap((h) => [...pays.get(h)].filter(inNet)));
+  perNet[n] = { hosts: hs.length, payTo: as.size, W: as.size ? +(hs.length / as.size).toFixed(2) : null };
+}
+const ranked = [...hostsByAddr.values()].sort((a, b) => b.size - a.size);
+const top10Hosts = new Set(ranked.slice(0, 10).flatMap((s) => [...s]));
+const brandShare = {};
+for (const b of ["CoinGecko", "Exa"]) {
+  const hs = [...R].filter(([h, bs]) => bs.has(b) && pays.has(h)).map(([h]) => h);
+  const as = new Set(hs.flatMap((h) => [...pays.get(h)].map(addrKey)));
+  brandShare[b] = { named_hosts: [...R].filter(([, bs]) => bs.has(b)).length, readable: hs.length, distinct_payTo: as.size };
+}
+
 const pct = (a, b) => `${((100 * a) / b).toFixed(1)}%`;
 console.log(`denominator (eligible hosts)               ${DENOM}`);
 console.log(`probed hosts                               ${probed.size}${probed.size < DENOM ? "  (run incomplete)" : ""}`);
@@ -112,6 +135,11 @@ console.log(`payTo readable (X)                         ${readable.length}  cove
 console.log(`  with a Base payTo                        ${readable.filter((h) => nets(h, "base")).length}`);
 console.log(`  with a Solana payTo                      ${readable.filter((h) => nets(h, "solana")).length}`);
 console.log(`not readable, by reason                    ${JSON.stringify(why)}`);
+console.log(`W hosts / distinct payTo (line 1.5)        ${W === null ? "-" : W.toFixed(2)}  ${W === null ? "" : W >= 1.5 ? "OVER" : "NOT OVER"}  (${readable.length} hosts, ${hostsByAddr.size} payTo)`);
+console.log(`  per network                              ${JSON.stringify(perNet)}`);
+console.log(`  hosts paid to the largest payTo          ${ranked[0]?.size ?? 0}`);
+console.log(`  share of hosts paid to the top 10 payTo  ${readable.length ? pct(top10Hosts.size, readable.length) : "-"}`);
+console.log(`  hosts naming CoinGecko / Exa             ${JSON.stringify(brandShare)}`);
 console.log(`hosts naming a brand not their own          ${R.size} (readable ${[...R.keys()].filter((h) => pays.has(h)).length})`);
 console.log(`  payTo matches the brand's own host       ${cnt("match")}`);
 console.log(`  payTo differs from the brand's own host  ${cnt("mismatch")}`);
